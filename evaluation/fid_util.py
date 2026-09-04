@@ -15,8 +15,9 @@ import torchvision
 from cleanfid.resize import build_resizer
 from cleanfid.features import build_feature_extractor
 from cleanfid.fid import get_batch_features, frechet_distance
+from project_paths import DATA_DIR, LOG_DIR
 
-FID_REF_DIR = Path("data")
+FID_REF_DIR = DATA_DIR
 
 def collect_features(dataset, mode, batch_size,
                      num_workers, device=torch.device("cuda"), use_dataparallel=True, verbose=True):
@@ -118,10 +119,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--split",       type=str,  choices=["train", "val"], help="which dataset to compute FID ref statistics")
     parser.add_argument("--mode",        type=str,  default="legacy_pytorch", help="the FID computation mode used in clean-fid")
-    parser.add_argument("--dataset-dir", type=Path, default="/dataset",       help="path to LMDB dataset")
+    parser.add_argument("--dataset-dir", type=Path, default=DATA_DIR,         help="path to LMDB dataset")
     parser.add_argument("--image-size",  type=int,  default=256)
     opt = parser.parse_args()
 
-    log = Logger(0, ".log")
+    log = Logger(0, LOG_DIR)
     log.info(f"======== Compute FID ref statistics: mode={opt.mode} ========")
     compute_fid_ref_stat(opt, log)

@@ -20,6 +20,7 @@ import torch
 from pathlib import Path
 import gdown
 from ipdb import set_trace as debug
+from project_paths import DATA_DIR
 
 FREEFORM_URL = "https://drive.google.com/file/d/1-5YRGsekjiRKQWqo0BV5RVQu0bagc12w/view?usp=share_link"
 
@@ -75,7 +76,8 @@ def load_masks(filename):
     return data
 
 def load_freeform_masks(op_type):
-    data_dir = Path("data")
+    data_dir = DATA_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
 
     mask_fn = data_dir / f"imagenet_{op_type}_masks.npz"
     if not mask_fn.exists():

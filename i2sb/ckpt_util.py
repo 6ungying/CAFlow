@@ -18,6 +18,7 @@ from guided_diffusion.script_util import (
     create_model,
     args_to_dict,
 )
+from project_paths import DATA_DIR
 
 from argparse import Namespace
 
@@ -107,7 +108,7 @@ def extract_diffusion_kwargs(kwargs):
         "timestep_respacing": kwargs["timestep_respacing"],
     }
 
-def download_adm_image256_uncond_ckpt(ckpt_dir="data/"):
+def download_adm_image256_uncond_ckpt(ckpt_dir=DATA_DIR):
     ckpt_pkl = os.path.join(ckpt_dir, I2SB_IMG256_UNCOND_PKL)
     ckpt_pt  = os.path.join(ckpt_dir, I2SB_IMG256_UNCOND_CKPT)
     if os.path.exists(ckpt_pkl) and os.path.exists(ckpt_pt):
@@ -135,7 +136,7 @@ def download_adm_image256_uncond_ckpt(ckpt_dir="data/"):
 
     print(f"Saved adm uncond pretrain models at {ckpt_pkl=} and {ckpt_pt}!")
 
-def download_adm_image256_cond_ckpt(ckpt_dir="data/"):
+def download_adm_image256_cond_ckpt(ckpt_dir=DATA_DIR):
     ckpt_pkl = os.path.join(ckpt_dir, I2SB_IMG256_COND_PKL)
     ckpt_pt  = os.path.join(ckpt_dir, I2SB_IMG256_COND_CKPT)
     if os.path.exists(ckpt_pkl) and os.path.exists(ckpt_pt):
@@ -172,7 +173,7 @@ def download_adm_image256_cond_ckpt(ckpt_dir="data/"):
 
     print(f"Saved adm cond pretrain models at {ckpt_pkl=} and {ckpt_pt}!")
 
-def download_ckpt(ckpt_dir="data/"):
+def download_ckpt(ckpt_dir=DATA_DIR):
     os.makedirs(ckpt_dir, exist_ok=True)
     download_adm_image256_uncond_ckpt(ckpt_dir=ckpt_dir)
     # download_adm_image256_cond_ckpt(ckpt_dir=ckpt_dir)
@@ -225,8 +226,6 @@ def build_ckpt_option(opt, log, ckpt_path):
             ckpt_opt.T = 1.0
         if not hasattr(ckpt_opt, 'clip_denoise'):
             ckpt_opt.clip_denoise = False
-        if not hasattr(ckpt_opt, 'use_physics'):
-            ckpt_opt.use_physics = False
         if not hasattr(ckpt_opt, 'image_size'):
             ckpt_opt.image_size = 256
         if not hasattr(ckpt_opt, 'latent_space'):

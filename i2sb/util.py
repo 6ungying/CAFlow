@@ -54,15 +54,18 @@ def custom_collate_fn(batch):
             # 舊格式 (含 ca4d, max_depth, dem_id)
             (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
              rainfall, img_path, vx_path, vy_path, ca4d, next_data, max_depth, dem_id) = item
+            spm = None
         elif len(item) == 13:
             # 更舊格式
             (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
              rainfall, img_path, vx_path, vy_path, ca4d, next_data) = item
+            spm = None
             max_depth = 4.0
             dem_id = -1
         elif len(item) == 12:
             (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
              rainfall, img_path, vx_path, vy_path, ca4d) = item
+            spm = None
             next_data = None
             max_depth = 4.0
             dem_id = -1
@@ -91,10 +94,10 @@ def custom_collate_fn(batch):
         max_depths.append(max_depth)
         dem_ids.append(dem_id)
     
-    # Stack tensors
+    # Stack tensors. Depth-only PIFF datasets intentionally return None for vx/vy.
     flood_batch = torch.stack(flood_imgs)
-    vx_batch = torch.stack(vx_imgs)
-    vy_batch = torch.stack(vy_imgs)
+    vx_batch = None if all(vx is None for vx in vx_imgs) else torch.stack(vx_imgs)
+    vy_batch = None if all(vy is None for vy in vy_imgs) else torch.stack(vy_imgs)
     dem_batch = torch.stack(dem_imgs)
     
     # [MODIFIED] 若列表中包含 None，則 Batch 結果也為 None (避免 stack 報錯)

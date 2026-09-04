@@ -27,12 +27,11 @@ from i2sb import Runner, download_ckpt
 from corruption import build_corruption
 from dataset import imagenet
 from i2sb import ckpt_util
+from project_paths import DATA_DIR, LOG_DIR, RESULTS_DIR
 
 import colored_traceback.always
 from ipdb import set_trace as debug
 from corruption.mixture import floodDataset, singleDEMFloodDataset, yilanDataset, hsinchuDataset
-
-RESULT_DIR = Path("results")
 
 def set_seed(seed):
     # https://github.com/pytorch/pytorch/issues/7068
@@ -102,7 +101,7 @@ def build_val_dataset(opt, log, corrupt_type):
 
 def get_recon_imgs_fn(opt, nfe):
     test_name = opt.sampling_method + "-dcvar"
-    sample_dir = RESULT_DIR / opt.ckpt / "test3_nfe{}{}_{}".format(
+    sample_dir = RESULTS_DIR / opt.ckpt / "test3_nfe{}{}_{}".format(
         nfe, "_clip" if opt.clip_denoise else "", test_name
     )
     os.makedirs(sample_dir, exist_ok=True)
@@ -113,13 +112,20 @@ def get_recon_imgs_fn(opt, nfe):
     return recon_imgs_fn
 
 def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
-    # [MODIFIED] 處理多種 dataset 回傳格式,支援 SPM 和 CA4D
+    # PIFF: x0 is TUFLOW depth, x1 is paired CA4D depth, cond is DEM.
     
     spm = None   # 初始化
-    ca4d = None  # 初始化
     dem_id = None
     image_name = None
+    cond = None
     _ = None  # [FIXED] 初始化 _
+
+    def ensure_single_channel(tensor):
+        if tensor.dim() == 4 and tensor.shape[1] > 1:
+            return tensor[:, 0:1, ...]
+        if tensor.dim() == 3 and tensor.shape[0] > 1:
+            return tensor[0:1, ...]
+        return tensor
 
     if isinstance(out, (list, tuple)) and len(out) >= 10:
         if len(out) == 16:
@@ -128,18 +134,12 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
              vy_binary_mask, rainfall, image_path, vx_path, vy_path, spm_image, ca4d_image, 
              next_timestep_data, max_depth, dem_id) = out
             
-            # 1. 構建 x1：DEM 作為條件輸入 (3 Channel [dem, dem, dem])
-            try:
-                x1 = torch.cat([dem_image, dem_image, dem_image], dim=1)
-            except Exception:
-                x1 = dem_image
-            
-            x1 = x1.to(opt.device)
-            
-            try:
-                corrupt_img = torch.cat([flood_image, vx_image, vy_image], dim=1)
-            except Exception:
-                corrupt_img = flood_image
+            if not getattr(ckpt_opt, 'ca4d', False) or ca4d_image is None:
+                raise ValueError("Depth-only PIFF sampling requires paired CA4D depth images")
+
+            x1 = ensure_single_channel(ca4d_image).to(opt.device)
+            corrupt_img = ensure_single_channel(flood_image).to(opt.device)
+            cond = ensure_single_channel(dem_image).to(opt.device) if ckpt_opt.cond_x1 else None
             
             # 2. Mask: 強制設為 None (全圖預測)
             mask = None 
@@ -180,13 +180,6 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
             else:
                 spm = None
             
-            # 5. CA4D Guidance - [FIXED] 根據 checkpoint 設定決定是否使用 CA4D
-            use_ca4d = getattr(ckpt_opt, 'ca4d', False)
-            if use_ca4d and ca4d_image is not None:
-                ca4d = ca4d_image.to(opt.device)
-            else:
-                ca4d = None
-            
             _ = (vx_path, vy_path, next_timestep_data, max_depth)
         
         elif len(out) == 15:
@@ -198,17 +191,12 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
             # [FIXED] 明確設定 spm_image = None（此格式不含 SPM）
             spm_image = None
             
-            try:
-                x1 = torch.cat([dem_image, dem_image, dem_image], dim=1)
-            except Exception:
-                x1 = dem_image
-            
-            x1 = x1.to(opt.device)
-            
-            try:
-                corrupt_img = torch.cat([flood_image, vx_image, vy_image], dim=1)
-            except Exception:
-                corrupt_img = flood_image
+            if not getattr(ckpt_opt, 'ca4d', False) or ca4d_image is None:
+                raise ValueError("Depth-only PIFF sampling requires paired CA4D depth images")
+
+            x1 = ensure_single_channel(ca4d_image).to(opt.device)
+            corrupt_img = ensure_single_channel(flood_image).to(opt.device)
+            cond = ensure_single_channel(dem_image).to(opt.device) if ckpt_opt.cond_x1 else None
             
             mask = None 
             
@@ -227,13 +215,6 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
             else:
                 spm = None
             
-            # 5. CA4D Guidance
-            use_ca4d = getattr(ckpt_opt, 'ca4d', False)
-            if use_ca4d and ca4d_image is not None:
-                ca4d = ca4d_image.to(opt.device)
-            else:
-                ca4d = None
-            
             _ = (vx_path, vy_path, next_timestep_data, max_depth)
             
         else:
@@ -245,28 +226,28 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
         mask = None
         corrupt_img = corrupt_method(clean_img.to(opt.device))
         x1 = corrupt_img.to(opt.device)
+        cond = x1.detach() if ckpt_opt.cond_x1 else None
         image_name = None
 
-    cond = x1.detach() if ckpt_opt.cond_x1 else None
     if ckpt_opt.add_x1_noise: 
         x1 = x1 + torch.randn_like(x1)
 
     # [FIXED] 確保所有變數都已定義後再返回
-    return corrupt_img, x1, mask, cond, y, image_name, spm, ca4d, _
+    return corrupt_img, x1, mask, cond, y, image_name, spm, _
 
 @torch.no_grad()
 def main(opt):
-    log = Logger(opt.global_rank, ".log")
+    log = Logger(opt.global_rank, LOG_DIR)
 
     ckpt_arg = Path(opt.ckpt)
     if ckpt_arg.is_absolute() and ckpt_arg.exists():
         ckpt_dir = ckpt_arg
-    elif (RESULT_DIR / opt.ckpt).exists():
-        ckpt_dir = RESULT_DIR / opt.ckpt
+    elif (RESULTS_DIR / opt.ckpt).exists():
+        ckpt_dir = RESULTS_DIR / opt.ckpt
     elif ckpt_arg.exists():
         ckpt_dir = ckpt_arg
     else:
-        log.info(f"Checkpoint folder not found: tried '{ckpt_arg}' and 'results/{opt.ckpt}'")
+        log.info(f"Checkpoint folder not found: tried '{ckpt_arg}' and '{RESULTS_DIR / opt.ckpt}'")
         raise FileNotFoundError(f"Checkpoint folder not found: '{opt.ckpt}'.")
 
     ckpt_opt = ckpt_util.build_ckpt_option(opt, log, ckpt_dir)
@@ -341,20 +322,13 @@ def main(opt):
     for loader_itr, out in enumerate(val_loader):
         print(f"[DEBUG] Processing batch {loader_itr + 1}/{len(val_loader)}")
 
-        # [MODIFIED] 解包包含 SPM 和 CA4D 的結果
-        corrupt_img, x1, mask, cond, y, image_name, spm, ca4d, _ = compute_batch(ckpt_opt, corrupt_type, corrupt_method, out)
+        corrupt_img, x1, mask, cond, y, image_name, spm, _ = compute_batch(ckpt_opt, corrupt_type, corrupt_method, out)
         
         # ===== CRITICAL SAFEGUARD: Check that physical guidance is actually loaded =====
         if getattr(ckpt_opt, "spm", False) and spm is None:
             raise RuntimeError(
                 "[SPM ERROR] Checkpoint was trained with SPM (--spm), but spm_image is None! "
                 "Check: (1) opt.spm={}, (2) SPM data path exists, (3) SPM filenames match pattern.".format(opt.spm)
-            )
-        
-        if getattr(ckpt_opt, "ca4d", False) and ca4d is None:
-            raise RuntimeError(
-                "[CA4D ERROR] Checkpoint was trained with CA4D (--ca4d), but ca4d_image is None! "
-                "Check: (1) opt.ca4d={}, (2) CA4D data path exists, (3) CA4D filenames match pattern.".format(opt.ca4d)
             )
         
         # ===== Debug print on first batch =====
@@ -365,16 +339,13 @@ def main(opt):
                 print(f"[DEBUG] spm shape={spm.shape}, range=[{spm.min().item():.3f}, {spm.max().item():.3f}]")
             else:
                 print(f"[DEBUG] spm: None")
-            if ca4d is not None:
-                print(f"[DEBUG] ca4d shape={ca4d.shape}, range=[{ca4d.min().item():.3f}, {ca4d.max().item():.3f}]")
-            else:
-                print(f"[DEBUG] ca4d: None")
+            if cond is not None:
+                print(f"[DEBUG] DEM cond shape={cond.shape}, range=[{cond.min().item():.3f}, {cond.max().item():.3f}]")
         
-        # [MODIFIED] 只傳入 CA4D 參數 (不傳 SPM,因為 ddpm_sampling 不支援)
         xs, _ = runner.ddpm_sampling(
             ckpt_opt, x1, y, mask=mask, cond=cond, clip_denoise=opt.clip_denoise, nfe=nfe, 
             verbose=opt.n_gpu_per_node==1, eval=True, ode_method=opt.sampling_method,
-            ca4d=ca4d, spm=spm
+            spm=spm
         )
         recon_img = xs[:, 0, ...].to(opt.device) 
 
@@ -383,52 +354,23 @@ def main(opt):
         for i in range(len(recon_img)):
             rec = recon_img[i]
 
-            # [MODIFIED] Denormalization Logic - 根據資料集選擇反標準化參數
+            # Depth-only denormalization.
             img_path_str = str(image_name[i]).lower()
             is_yilan = 'yilan' in img_path_str
             is_hsinchu = 'hsinchu' in img_path_str
 
-            if rec.shape[0] >= 3:
-                if is_hsinchu:
-                    # ===== Hsinchu 統計參數 =====
-                    depth_rec = rec[0:1] * 0.0256081 + 0.9751028
-                    vx_rec = rec[1:2] * 0.025608 + 0.6713106
-                    vy_rec = rec[2:3] * 0.0237567 + 0.461086
-                elif is_yilan:
-                    # ===== Yilan 統計參數 =====
-                    depth_rec = rec[0:1] * 0.0573 + 0.9738
-                    vx_rec = rec[1:2] * 0.1852 * 0.01 + 0.4191
-                    vy_rec = rec[2:3] * 0.1401 * 0.01 + 0.4699
-                else:
-                    # ===== 訓練集統計參數 (多地形/單地形) =====
-                    depth_rec = rec[0:1] * 0.0405 + 0.987
-                    vx_rec = rec[1:2] * 0.0780 * 0.88 + 0.561
-                    vy_rec = rec[2:3] * 0.0789 * 0.88 + 0.495
-
-            path_base = image_name[i].split("\\")[-1]
-            if path_base.endswith('.png'):
-                path_base = path_base[:-4]
-            
-            # [MODIFIED] Save logic for 3 channels
-            if rec.shape[0] >= 3: 
-                # Save depth
-                depth_name = path_base.replace('_d_', '_d_') + '.png'
-                depth_path = recon_imgs_fn.parent / f"recon_{depth_name}"
-                tu.save_image(depth_rec, depth_path)
-                
-                # Save vx
-                vx_name = path_base.replace('_d_', '_vx_') + '.png'
-                vx_path = recon_imgs_fn.parent / f"recon_{vx_name}"
-                tu.save_image(vx_rec, vx_path)
-                
-                # Save vy
-                vy_name = path_base.replace('_d_', '_vy_') + '.png'
-                vy_path = recon_imgs_fn.parent / f"recon_{vy_name}"
-                tu.save_image(vy_rec, vy_path)
+            if is_hsinchu:
+                depth_rec = rec * 0.0256081 + 0.9751028
+            elif is_yilan:
+                depth_rec = rec * 0.0279 + 0.9880
+            elif 'dems' in img_path_str:
+                depth_rec = rec * 0.0405 + 0.986
             else:
-                # Fallback
-                save_path = recon_imgs_fn.parent / f"recon_{path_base}.png"
-                tu.save_image(rec, save_path)
+                depth_rec = rec * 0.0343 + 0.987
+
+            path_base = Path(str(image_name[i])).stem
+            depth_path = recon_imgs_fn.parent / f"recon_{path_base}.png"
+            tu.save_image(depth_rec, depth_path)
 
 
 if __name__ == '__main__':
@@ -442,8 +384,8 @@ if __name__ == '__main__':
     parser.add_argument("--eval",        action="store_true", default=True, help="")
     # data
     parser.add_argument("--image-size",     type=int,  default=256)
-    parser.add_argument("--dataset-dir",    type=Path, default="C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\50PNG\\",  help="path to dataset")
-    parser.add_argument("--partition",      type=str,  default=None,        help="e.g., '0_4' means the first 25% of the dataset")
+    parser.add_argument("--dataset-dir",    type=Path, default=DATA_DIR,      help="path to dataset")
+    parser.add_argument("--partition",      type=str,  default=None,        help="e.g., '0_4' means the first 25%% of the dataset")
     parser.add_argument("--use-single-dem", action="store_true", default=False, help="use single DEM flood dataset for testing (instead of multi-DEM)")
     parser.add_argument("--use-yilan",      action="store_true", default=False, help="use Yilan multi-terrain flood dataset for testing")
     parser.add_argument("--use-hsinchu",    action="store_true", default=False, help="use Hsinchu flood dataset for testing")
@@ -452,12 +394,12 @@ if __name__ == '__main__':
     
     # [ADDED] Physical guidance flags
     parser.add_argument("--spm",            action="store_true", default=False, help="use SPM guidance during sampling (will be synced from checkpoint)")
-    parser.add_argument("--ca4d",           action="store_true", default=False, help="use CA4D guidance during sampling (will be synced from checkpoint)")
+    parser.add_argument("--ca4d",           action="store_true", default=False, help="use paired CA4D depth as x1 (synced from checkpoint)")
 
     # sample
     parser.add_argument("--batch-size",     type=int,  default=30)
     parser.add_argument("--sampling-method", type=str, default='euler-maruyama', help="sampling method")
-    parser.add_argument("--ckpt",           type=str,  default='C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\results\\flood-single-b128-sde-norm-novar-ca4d',        help="the checkpoint name from which we wish to sample")
+    parser.add_argument("--ckpt",           type=str,  default="flood-single-ca4d", help="checkpoint name under the results directory, or a checkpoint directory path")
     parser.add_argument("--nfe",            type=int,  default=10,        help="sampling steps")
     parser.add_argument("--clip-denoise",   action="store_true",            help="clamp predicted image to [-1,1] at each")
     parser.add_argument("--use-fp16",       action="store_true",            help="use fp16 network weight for faster sampling")

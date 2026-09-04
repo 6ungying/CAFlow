@@ -1,12 +1,13 @@
 import os
 import cv2
 import pandas as pd
+from project_paths import DATA_DIR
 
 def extract_parts(filename):
     parts = filename.split("_")
     return int(parts[0][2:]), int(parts[2])  # Returns '03' and '025'
 
-rainfall_path = 'C:\\Users\\Hank\\Desktop\\dev\\PNG_TUFLOW\\scenario_rainfall.csv'
+rainfall_path = DATA_DIR / "dems" / "scenario_rainfall.csv"
 rainfall = pd.read_csv(rainfall_path)
 # remove first row, no 0 row 
 rainfall = rainfall.iloc[1:, 1:]
@@ -39,7 +40,7 @@ print(rainfall_cum_value[0:10])
 print(cell_positions[0:10])
 print(len(rainfall_cum_value))
 
-flood_path = 'C:\\Users\\Hank\\Desktop\\dev\\PNG_TUFLOW\\tainan_png'
+flood_path = DATA_DIR / "dems" / "d"
 
 def find_image(cell_position, flood_path):
     col, row = cell_position
@@ -77,5 +78,4 @@ cv2.waitKey(0)
 print(image[0, 0])
 # val 5 13 16 26 36 46
 # train 1 3 6 8 10 11 12 14 15 17 18 19 20 21 22 23 24 25 27 28 29 30 31 32 33 34 35 37 38 39 40 41 42 43 44 45 47 48 49 50
-
 

@@ -1,207 +1,81 @@
-# read all the images in the floder and calculate mean std
-import os
+import argparse
+from pathlib import Path
 
 import cv2
 import numpy as np
-import pandas as pd
 
-# path = 'C:\\Users\\User\\Desktop\\dev\\50PNG\\dem_png'
+from project_paths import DATA_DIR
 
-# files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f)) and not f.endswith('.csv') and not f.endswith('025_00.png')]
-# mean = 0
-# std = 0
-# dem_stat = 'C:\\Users\\User\\Desktop\\dev\\50PNG\\dem_png\\elevation_stats.csv'
-# dem_stat = pd.read_csv(dem_stat)
-# pixel_list = []
-# for file_name in files:
-#     image = cv2.imread(os.path.join(path, file_name), cv2.IMREAD_UNCHANGED)[:,:,0]
-#     filename = file_name.split('.')[0]
-#     dem_cur_state = dem_stat[dem_stat['Filename'] == int(filename)]
-#     min_elev = int(dem_cur_state['Min Elevation'])
-#     max_elev = int(dem_cur_state['Max Elevation'])
-#         # do a normalization with max = 410 min = -3, with current max = max_elev, min = min_elev
-#     real_height = image / 255 * (max_elev - min_elev) + min_elev
-#     dem_image = (real_height - (-3)) / (125 + 3) * 255
-#     # perform totensor()
-#     dem_image = dem_image.astype(np.float32)
-#     dem_image = np.clip(dem_image, 0, 255)
-#     dem_image = dem_image / 255.0  # normalize to [0, 1]
-#     # mean += nstd(real_height)
-#     pixel_list.extend(dem_image.flatten())
 
-# pixel_list = np.array(pixel_list)
-# mean = np.mean(pixel_list)
-# std = np.std(pixel_list)
-# print(f'Mean: {mean}, Std: {std}')
-
-# pixel_list = []
-# path = 'C:\\Users\\User\\Desktop\\dev\\50PNG\\DEPTH_png'
-
-# # get all the image in the path, the subfolder is 1 and one more subfolder RF01 then the png files, get all the png file name
-# files = [os.path.join(path, f, rainfall, png_file) for f in os.listdir(path) for rainfall in os.listdir(os.path.join(path, f)) for png_file in os.listdir(os.path.join(path, f, rainfall)) if png_file.endswith('.png')]
-
-# mean_sum = 0
-# std_sum = 0
-# pixel_count = 0
-
-# for file in files: 
-#     image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-#     if image is None:
-#         continue
-#     image = image.astype(np.float64) / 255.0
-    
-#     mean_sum += np.sum(image)
-#     std_sum += np.sum(np.square(image))
-#     pixel_count += image.size
-
-# mean = mean_sum / pixel_count
-# std = np.sqrt(std_sum / pixel_count - mean**2)
-
-# print(f'Mean: {mean}, Std: {std}')
-
-#path = 'C:\\Users\\Hank\\Desktop\\PIFF-master02\\data\\tainan_dem.png'
-
-#file_path = [os.path.join(path, rainfall, png_file) for rainfall in os.listdir(path) for png_file in os.listdir(os.path.join(path, rainfall)) if png_file.endswith('.png')]
-#mean_sum = 0
-#std_sum = 0
-#pixel_count = 0
-
-#for file in file_path:
-#    image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-#    if image is None:
-#       continue
-#    image = image.astype(np.float64) / 255.0
-    
-#    mean_sum += np.sum(image)
-#    std_sum += np.sum(np.square(image))
-#    pixel_count += image.size
-
-#mean = mean_sum / pixel_count
-#std = np.sqrt(std_sum / pixel_count - mean**2)
-#print(f'Mean: {mean}, Std: {std}')
-
-# count the percentage of the pixel value that is larger than 100
-# percentage = len(np.where(pixel_list > 55)[0]) / len(pixel_list)
-# print(percentage)
-# print(mean, std)
-
-# depth_folder = 'C:\\Users\\User\\Desktop\\dev\\50PNG\\DEPTH_png'
-# dem_depth_folder = [f for f in os.listdir(depth_folder) if os.path.isdir(os.path.join(depth_folder, f))]
-
-# for folder in
-
-# Calculate mean and std for depth (d), Vx, and Vy
-def calculate_mean_std(folder_path, file_pattern):
-    """
-    Calculate mean and std for images in a folder structure
-    Structure: folder_path/{dem_num}/{RF_scenario}/{images}
-    """
-    file_paths = []
-    # 遍歷 DEM 資料夾 (1, 2, 3, ...)
-    for dem_folder in os.listdir(folder_path):
-        dem_path = os.path.join(folder_path, dem_folder)
-        if os.path.isdir(dem_path):
-            # 遍歷降雨情境資料夾 (RF01, RF02, ...)
-            for rainfall_folder in os.listdir(dem_path):
-                rainfall_path = os.path.join(dem_path, rainfall_folder)
-                if os.path.isdir(rainfall_path):
-                    # 取得該資料夾內的 PNG 檔案
-                    for png_file in os.listdir(rainfall_path):
-                        if png_file.endswith('.png') and file_pattern in png_file:
-                            file_paths.append(os.path.join(rainfall_path, png_file))
-    
-    mean_sum = 0
-    std_sum = 0
+def image_mean_std(paths):
+    mean_sum = 0.0
+    square_sum = 0.0
     pixel_count = 0
-    
-    print(f"Processing {len(file_paths)} files for {file_pattern}...")
-    
-    for file_path in file_paths:
-        image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+
+    for path in paths:
+        image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if image is None:
             continue
+        if image.ndim == 3:
+            image = image[:, :, 0]
         image = image.astype(np.float64) / 255.0
-        
         mean_sum += np.sum(image)
-        std_sum += np.sum(np.square(image))
+        square_sum += np.sum(np.square(image))
         pixel_count += image.size
-    
-    if pixel_count > 0:
-        mean = mean_sum / pixel_count
-        std = np.sqrt(std_sum / pixel_count - mean**2)
-        return mean, std
-    else:
-        return 0, 0
 
-# Calculate for depth (d)
-print("=== Calculating statistics for depth (d) ===")
-depth_path = 'C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\hsinchu\\tuflow\\d'
-d_mean, d_std = calculate_mean_std(depth_path, '_d_')
-print(f'Depth - Mean: {d_mean}, Std: {d_std}')
+    if pixel_count == 0:
+        return 0.0, 0.0
 
-# Calculate for Vx
-print("\n=== Calculating statistics for Vx ===")
-vx_path = 'C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\hsinchu\\tuflow\\vx'
-vx_mean, vx_std = calculate_mean_std(vx_path, '_vx_')
-print(f'Vx - Mean: {vx_mean}, Std: {vx_std}')
+    mean = mean_sum / pixel_count
+    std = np.sqrt(square_sum / pixel_count - mean**2)
+    return mean, std
 
-# Calculate for Vy
-print("\n=== Calculating statistics for Vy ===")
-vy_path = 'C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\hsinchu\\tuflow\\vy'
-vy_mean, vy_std = calculate_mean_std(vy_path, '_vy_')
-print(f'Vy - Mean: {vy_mean}, Std: {vy_std}')
 
-# Calculate for dem
-print("\n=== Calculating statistics for dem ===")
-dem_path = 'C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\hsinchu\\dem'
+def calculate_mean_std(folder_path: Path, file_pattern: str):
+    if not folder_path.is_dir():
+        raise FileNotFoundError(f"Image folder not found: {folder_path}")
 
-# DEM files have a different structure (not nested like tuflow data)
-# They are directly in the dem folder as yilan01.png, yilan02.png, etc.
-def calculate_dem_mean_std(dem_folder_path):
-    """
-    Calculate mean and std for DEM files
-    DEM files are directly in the folder (yilan01.png, yilan02.png, etc.)
-    """
-    file_paths = []
-    
-    # 取得該資料夾內的 PNG 檔案
-    for png_file in os.listdir(dem_folder_path):
-        file_full_path = os.path.join(dem_folder_path, png_file)
-        if os.path.isfile(file_full_path) and png_file.endswith('.png'):
-            file_paths.append(file_full_path)
-    
-    mean_sum = 0
-    std_sum = 0
-    pixel_count = 0
-    
-    print(f"Processing {len(file_paths)} files for dem...")
-    
-    for file_path in file_paths:
-        image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-        if image is None:
-            continue
-        # Handle both grayscale and multi-channel images
-        if len(image.shape) == 3:
-            image = image[:, :, 0]  # Take the first channel if multi-channel
-        
-        image = image.astype(np.float64) / 255.0
-        
-        mean_sum += np.sum(image)
-        std_sum += np.sum(np.square(image))
-        pixel_count += image.size
-    
-    if pixel_count > 0:
-        mean = mean_sum / pixel_count
-        std = np.sqrt(std_sum / pixel_count - mean**2)
-        return mean, std
-    else:
-        return 0, 0
+    paths = sorted(
+        path for path in folder_path.rglob("*.png")
+        if file_pattern in path.name
+    )
+    print(f"Processing {len(paths)} files for {file_pattern}...")
+    return image_mean_std(paths)
 
-dem_mean, dem_std = calculate_dem_mean_std(dem_path)
-print(f'Dem - Mean: {dem_mean}, Std: {dem_std}')
 
-# Calculate for V
-# print("\n=== Calculating statistics for V ===")
-# vz_path = 'C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\yilan_new\\tuflow\\v'
-# v_mean, v_std = calculate_mean_std(vz_path, '_v_')
-# print(f'V - Mean: {v_mean}, Std: {v_std}')
+def calculate_dem_mean_std(folder_path: Path):
+    if not folder_path.is_dir():
+        raise FileNotFoundError(f"DEM folder not found: {folder_path}")
+
+    paths = sorted(folder_path.rglob("*.png"))
+    print(f"Processing {len(paths)} files for DEM...")
+    return image_mean_std(paths)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Calculate water-depth and DEM image statistics.")
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DATA_DIR / "hsinchu",
+        help="regional dataset root containing tuflow/ and dem/",
+    )
+    parser.add_argument("--tuflow-dir", type=Path, help="override the TUFLOW directory")
+    parser.add_argument("--dem-dir", type=Path, help="override the DEM directory")
+    args = parser.parse_args()
+
+    data_root = args.data_root.expanduser().resolve()
+    tuflow_dir = (args.tuflow_dir or data_root / "tuflow").expanduser().resolve()
+    dem_dir = (args.dem_dir or data_root / "dem").expanduser().resolve()
+
+    print("=== Calculating statistics for depth (d) ===")
+    d_mean, d_std = calculate_mean_std(tuflow_dir / "d", "_d_")
+    print(f"Depth - Mean: {d_mean}, Std: {d_std}")
+
+    print("\n=== Calculating statistics for DEM ===")
+    dem_mean, dem_std = calculate_dem_mean_std(dem_dir)
+    print(f"DEM - Mean: {dem_mean}, Std: {dem_std}")
+
+
+if __name__ == "__main__":
+    main()

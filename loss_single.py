@@ -1,10 +1,13 @@
+import argparse
 import os
+from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
 from scipy.spatial import distance
 from pytorch_fid import fid_score
 import torch
+from project_paths import OUTPUT_DIR
 
 def water_depth_max_calculation(real_image, fake_image):
     # find the index of the largest value in the real image
@@ -75,19 +78,31 @@ import os
 import pandas as pd 
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 if __name__ == "__main__":
-# Usage example
-# real_folder = "/home/Josh/BrightestImageProcessing/Josh/image_generation/style_transfer/pytorch-CycleGAN-and-pix2pix/datasets/euv/image/test"
-# fake_folder = "/home/Josh/BrightestImageProcessing/Josh/image_generation/style_transfer/pytorch-CycleGAN-and-pix2pix/results/p2p_wgangp_bs64_batch_pixel"
-    real_folder = "C:\\Users\\Hank\\Desktop\\dev\\new_test\\test_total"
-    fake_folder = "C:\\Users\\Hank\\Desktop\\dev\\I2SB-flood\\results\\flood-latent-new-b4\\test3_nfe1"
-    saving_path_name = 'latent_i2sb'
+    parser = argparse.ArgumentParser(description="Compare one generated-image set with references.")
+    parser.add_argument("real_folder", type=Path, help="folder containing reference images")
+    parser.add_argument("fake_folder", type=Path, help="folder containing generated images")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUTPUT_DIR / "metrics" / "loss_single.csv",
+        help="output CSV path",
+    )
+    args = parser.parse_args()
+
+    real_folder = args.real_folder.expanduser().resolve()
+    fake_folder = args.fake_folder.expanduser().resolve()
+    for folder in (real_folder, fake_folder):
+        if not folder.is_dir():
+            raise FileNotFoundError(f"Image folder not found: {folder}")
+
     real_filenames, fid, l1_distances, l2_distances, linf_distances, water_l1_depth, water_rmse_depth, max_water_depth, water_percentage_depth = calculate_distances(real_folder, fake_folder)
 
     # save l1_distances, l2_distances, linf_distances, water_depth, water_rmse_depth, max_water_depth, water_percentage_depth to a csv file
     distances_pd = pd.DataFrame(list(zip(real_filenames, l1_distances, l2_distances, linf_distances, water_l1_depth, water_rmse_depth, max_water_depth, water_percentage_depth)), 
                                 columns = ['filenames', 'L1 Distance', 'L2 Distance', 'L-infinity Distance', 'Water L1 Depth', 'Water RMSE Depth', 'Max Water Depth', 'Water Percentage Depth'])
-    saving_file_name = f"{saving_path_name}.csv"
-    distances_pd.to_csv("C:\\Users\\Hank\\Desktop\\dev\\distance_result\\" + saving_file_name)
+    output_path = args.output.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    distances_pd.to_csv(output_path, index=False)
 
     avg_l1_distance = np.mean(l1_distances)
     avg_l2_distance = np.mean(l2_distances)
@@ -127,7 +142,6 @@ if __name__ == "__main__":
         print(f"Average Max Water Depth for {item} rows:", average_max_water_depth)
         print(f"Average Water Percentage Depth for {item} rows:", average_water_percentage_depth)
         print("\n")
-
 
 
 

@@ -26,11 +26,10 @@ from corruption import build_corruption
 from corruption.mixture import floodDataset, singleDEMFloodDataset
 from dataset import imagenet
 from i2sb import Runner, download_ckpt
+from project_paths import DATA_DIR, LOG_DIR, RESULTS_DIR
 
 import colored_traceback.always
 from ipdb import set_trace as debug
-
-RESULT_DIR = Path("results")
 
 def set_seed(seed):
     # https://github.com/pytorch/pytorch/issues/7068
@@ -45,7 +44,7 @@ def create_training_options():
     # --------------- basic ---------------
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed",           type=int,   default=0)
-    parser.add_argument("--name",           type=str,   default='flood-single-b128-sde-norm-novar-spm-mass',        help="experiment ID")
+    parser.add_argument("--name",           type=str,   default='flood-single-ca4d',        help="experiment ID")
     parser.add_argument("--ckpt",           type=str,   default=None,        help="resumed checkpoint name")
     parser.add_argument("--gpu",            type=int,   default=None,        help="set only if you wish to run on a particular device; use -1 for CPU")
     parser.add_argument("--n-gpu-per-node", type=int,   default=1,           help="number of gpu on each node")
@@ -57,7 +56,7 @@ def create_training_options():
 
     # --------------- SB model ---------------
     parser.add_argument("--image-size",     type=int,   default=256)
-    parser.add_argument("--dataset-dir", type=Path, default="C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\data\\dems\\", help="path to dataset")
+    parser.add_argument("--dataset-dir", type=Path, default=DATA_DIR / "dems", help="path to dataset")
     parser.add_argument("--latent-space", action="store_true", default=False, help="use latent space model")
     parser.add_argument("--normalize-latent", action="store_true", default=False, help="normalize latent space")
     parser.add_argument("--timestep-importance", type=str, default='continuous', help="use timestep importance")
@@ -71,11 +70,11 @@ def create_training_options():
     parser.add_argument("--clip-denoise",   action="store_true",             help="clamp predicted image to [-1,1] at each")
 
     # optional configs for conditional network
-    parser.add_argument("--cond-x1",        action="store_true",  default=True,           help="conditional the network on degraded images")
+    parser.add_argument("--cond-x1",        action="store_true",  default=True,           help="condition the network on the DEM")
     
-    # [MODIFIED] 同時支援 SPM 和 CA4D (雙物理模型)
+    # Optional spatial guidance on top of the CA4D depth input.
     parser.add_argument("--spm",            action="store_true",  default=False,          help="use SPM guidance (1-channel spatial prior map)")
-    parser.add_argument("--ca4d",           action="store_true",  default=False,          help="use CA4D guidance (h, vx, vy) for conditional network")
+    parser.add_argument("--ca4d",           action="store_true",  default=True,           help="use paired CA4D depth as I2SB x1")
     
     parser.add_argument("--add-x1-noise",   action="store_true",             help="add noise to conditional network")
 
@@ -89,16 +88,8 @@ def create_training_options():
     parser.add_argument("--l2-norm",        type=float, default=0.0)
     parser.add_argument("--ema",            type=float, default=0.999)
 
-    # --------------- physics loss ---------------
-    parser.add_argument("--use-physics",    action="store_true", default=False,  help="enable physics-informed loss")
-    parser.add_argument("--physics-weight", type=float, default=1.0,         help="weight for physics loss")
-    parser.add_argument("--dx",             type=float, default=20.0,        help="spatial resolution in x direction (meters)")
-    parser.add_argument("--dy",             type=float, default=20.0,        help="spatial resolution in y direction (meters)")
-    parser.add_argument("--dt",             type=float, default=3600.0,      help="temporal resolution (seconds, default=1 hour)")
-
     # --------------- path and logging ---------------
-    # parser.add_argument("--dataset-dir",    type=Path,  default="/dataset",  help="path to LMDB dataset")
-    parser.add_argument("--log-dir",        type=Path,  default=".log",      help="path to log std outputs and writer data")
+    parser.add_argument("--log-dir",        type=Path,  default=LOG_DIR,      help="path to log std outputs and writer data")
     parser.add_argument("--log-writer",     type=str,   default='tensorbard',        help="log writer: can be tensorbard, wandb, or None")
     parser.add_argument("--wandb-api-key",  type=str,   default=None,        help="unique API key of your W&B account; see https://wandb.ai/authorize")
     parser.add_argument("--wandb-user",     type=str,   default=None,        help="user name of your W&B account")
@@ -151,11 +142,11 @@ def create_training_options():
 
     # ========= path handle =========
     os.makedirs(opt.log_dir, exist_ok=True)
-    opt.ckpt_path = RESULT_DIR / opt.name
+    opt.ckpt_path = RESULTS_DIR / opt.name
     os.makedirs(opt.ckpt_path, exist_ok=True)
 
     if opt.ckpt is not None:
-        ckpt_file = RESULT_DIR / opt.ckpt / "latest.pt"
+        ckpt_file = RESULTS_DIR / opt.ckpt / "latest.pt"
         assert ckpt_file.exists()
         opt.load = ckpt_file
     else:
@@ -198,7 +189,7 @@ if __name__ == '__main__':
     assert opt.corrupt is not None
 
     # one-time download: ADM checkpoint
-    # download_ckpt("data/")
+    # download_ckpt(DATA_DIR)
 
     if opt.distributed:
         size = opt.n_gpu_per_node

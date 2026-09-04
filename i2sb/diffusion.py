@@ -6,6 +6,8 @@
 # ---------------------------------------------------------------
 
 import argparse
+from pathlib import Path
+
 import numpy as np
 from tqdm import tqdm
 from functools import partial
@@ -15,6 +17,7 @@ import yaml
 
 from .util import unsqueeze_xdim
 from i2sb.VQGAN.vqgan import VQModel
+from project_paths import CONFIG_DIR, DATA_DIR, PROJECT_ROOT, VQMODEL_DIR
 
 from ipdb import set_trace as debug
 
@@ -42,15 +45,43 @@ def dict2namespace(config):
         setattr(namespace, key, new_value)
     return namespace
 
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "flooding.yaml"
+
+
 def create_model_config():
     # --------------- basic ---------------
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",         type=str,   default='C:\\Users\\THINKLAB\\Desktop\\PIFF-master02\\configs\\flooding.yaml',        help="config file path")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="model config file path",
+    )
 
     opt, _ = parser.parse_known_args()
-    
-    with open(opt.config, 'r') as f:
+
+    config_path = opt.config.expanduser().resolve()
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Model config file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as f:
         dict_config = yaml.load(f, Loader=yaml.FullLoader)
+
+    # Interpret relative YAML paths from the repository root instead of the
+    # process's current working directory.
+    dataset_path = Path(dict_config["data"]["dataset_config"]["dataset_path"])
+    if dataset_path == Path("data"):
+        dict_config["data"]["dataset_config"]["dataset_path"] = str(DATA_DIR)
+    elif not dataset_path.is_absolute():
+        dict_config["data"]["dataset_config"]["dataset_path"] = str(PROJECT_ROOT / dataset_path)
+
+    vqgan_path = Path(dict_config["model"]["VQGAN"]["params"]["ckpt_path"])
+    if vqgan_path.parts and vqgan_path.parts[0] == "VQmodel":
+        dict_config["model"]["VQGAN"]["params"]["ckpt_path"] = str(
+            VQMODEL_DIR.joinpath(*vqgan_path.parts[1:])
+        )
+    elif not vqgan_path.is_absolute():
+        dict_config["model"]["VQGAN"]["params"]["ckpt_path"] = str(PROJECT_ROOT / vqgan_path)
 
     namespace_config = dict2namespace(dict_config)
     dict_config = namespace2dict(namespace_config)

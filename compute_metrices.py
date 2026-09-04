@@ -22,11 +22,11 @@ from logger import Logger
 from evaluation.resnet import build_resnet50
 from evaluation import fid_util
 from i2sb import download
+from project_paths import DATA_DIR, LOG_DIR, RESULTS_DIR
 
 import colored_traceback.always
 from ipdb import set_trace as debug
 
-RESULT_DIR = Path("results")
 ADM_IMG256_FID_TRAIN_REF_CKPT = "https://openaipublic.blob.core.windows.net/diffusion/jul-2021/ref_batches/imagenet/256/VIRTUAL_imagenet256_labeled.npz"
 
 def set_seed(seed):
@@ -90,7 +90,7 @@ def convert_to_numpy(t):
     return out.cpu().numpy() # [0, 255]
 
 def find_recon_imgs_pts(opt, log):
-    sample_dir = RESULT_DIR / opt.ckpt / opt.sample_dir
+    sample_dir = RESULTS_DIR / opt.ckpt / opt.sample_dir
 
     recon_imgs_pt = sample_dir / "recon.pt"
     if recon_imgs_pt.exists():
@@ -132,7 +132,7 @@ def build_ref_opt(opt, ref_fid_fn):
 
 def get_ref_fid(opt, log):
     # get ref fid npz file
-    with open(RESULT_DIR / opt.ckpt / "options.pkl", "rb") as f:
+    with open(RESULTS_DIR / opt.ckpt / "options.pkl", "rb") as f:
         ckpt_opt = pickle.load(f)
 
     # we use train set for super-res and val set for the rest of the tasks
@@ -140,12 +140,12 @@ def get_ref_fid(opt, log):
 
     # build npz file
     if split == "train":
-        ref_fid_fn = Path("data/VIRTUAL_imagenet256_labeled.npz")
+        ref_fid_fn = DATA_DIR / "VIRTUAL_imagenet256_labeled.npz"
         if not ref_fid_fn.exists():
             log.info(f"Downloading {ref_fid_fn=} (this can take a while ...)")
             download(ADM_IMG256_FID_TRAIN_REF_CKPT, ref_fid_fn)
     elif split == "val":
-        ref_fid_fn = Path("data/fid_imagenet_256_val.npz")
+        ref_fid_fn = DATA_DIR / "fid_imagenet_256_val.npz"
         if not ref_fid_fn.exists():
             log.info(f"Generating {ref_fid_fn=} (this can take a while ...)")
             ref_opt = build_ref_opt(opt, ref_fid_fn)
@@ -161,7 +161,7 @@ def log_metrices(opt):
     set_seed(opt.seed)
     if opt.gpu is not None:
         torch.cuda.set_device(opt.gpu)
-    log = Logger(0, ".log")
+    log = Logger(0, LOG_DIR)
 
     log.info(f"======== Compute metrices: {opt.ckpt=}, {opt.mode=} ========")
 
@@ -191,7 +191,7 @@ if __name__ == '__main__':
     parser.add_argument("--gpu",         type=int,  default=None,             help="set only if you wish to run on a particular device")
     parser.add_argument("--ckpt",        type=str,  default=None,             help="the checkpoint name for which we wish to compute metrices")
     parser.add_argument("--mode",        type=str,  default="legacy_pytorch", help="the FID computation mode used in clean-fid")
-    parser.add_argument("--dataset-dir", type=Path, default="/dataset",       help="path to LMDB dataset")
+    parser.add_argument("--dataset-dir", type=Path, default=DATA_DIR,         help="path to LMDB dataset")
     parser.add_argument("--sample-dir",  type=Path, default=None,             help="directory where samples are stored")
     parser.add_argument("--image-size",  type=int,  default=256)
 

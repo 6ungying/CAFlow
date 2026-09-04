@@ -1,10 +1,15 @@
 
+#!/usr/bin/env bash
+
 NAME=$1
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+RESULTS_DIR="${CAFLOW_RESULTS_DIR:-$PROJECT_ROOT/results}"
 
 echo "Note: available models are inpaint-center, inpaint-freeform1020, inpaint-freeform2030, blur-gauss, blur-uni, sr4x-pool, sr4x-bicubic, jpeg-5, and jpeg-10"
 echo "Specified [$NAME]"
 
-mkdir -p results && cd results
+mkdir -p "$RESULTS_DIR" && cd "$RESULTS_DIR"
 
 if [ "$NAME" == inpaint-center ]; then
     gdown --folder 1ounBKyUezkZmjC7d3tzbBwfEBe0Y7bkM

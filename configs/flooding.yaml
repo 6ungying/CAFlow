@@ -16,7 +16,7 @@ data:
   dataset_name: 'euv'
   dataset_type: 'custom_aligned'
   dataset_config:
-    dataset_path: '/home/Documents/BBDM/realNoiseGeneration_denoise'
+    dataset_path: 'data'
     image_size: 256
     channels: 3
     to_normal: True
@@ -53,7 +53,7 @@ model:
 
   VQGAN:
     params:
-      ckpt_path: 'C:\\Users\\User\\Desktop\\dev\\I2SB-flood\\VQmodel\\model.ckpt'
+      ckpt_path: 'VQmodel/model.ckpt'
       embed_dim: 3
       n_embed: 8192
       ddconfig:

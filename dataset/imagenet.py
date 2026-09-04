@@ -10,6 +10,7 @@ import io
 
 from PIL import Image
 import lmdb
+from project_paths import PROJECT_ROOT
 
 import torch
 import torchvision.datasets as datasets
@@ -105,8 +106,9 @@ def readlines(fn):
 
 def build_lmdb_dataset_val10k(opt, log, transform=None):
 
-    fn_10k = readlines(f"dataset/val_faster_imagefolder_10k_fn.txt")
-    label_10k = readlines(f"dataset/val_faster_imagefolder_10k_label.txt")
+    metadata_dir = PROJECT_ROOT / "dataset"
+    fn_10k = readlines(metadata_dir / "val_faster_imagefolder_10k_fn.txt")
+    label_10k = readlines(metadata_dir / "val_faster_imagefolder_10k_label.txt")
 
     if transform is None: transform = build_test_transform(opt.image_size)
     dataset = _build_lmdb_dataset(opt.dataset_dir / 'val', log, transform=transform)

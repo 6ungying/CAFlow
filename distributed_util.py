@@ -12,6 +12,7 @@ import torch
 
 import torch.distributed as dist
 from torch.multiprocessing import Process
+from project_paths import PROJECT_ROOT
 
 def init_processes(rank, size, fn, args):
     """ Initialize the distributed environment. """
@@ -22,7 +23,7 @@ def init_processes(rank, size, fn, args):
     # Fix Windows GLOO initialization issue
     import platform
     if platform.system() == 'Windows' and size > 1:
-        init_method = f'file:///C:/Users/Hank/Desktop/PIFF-master02/dist_init_tmp'
+        init_method = (PROJECT_ROOT / ".dist_init").resolve().as_uri()
         dist.init_process_group(backend='gloo', init_method=init_method, rank=rank, world_size=size)
     elif size > 1:
         dist.init_process_group(backend='GLOO', init_method='env://', rank=rank, world_size=size)

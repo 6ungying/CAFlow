@@ -19,144 +19,73 @@ class DataLoaderX(DataLoader):
 
 def custom_collate_fn(batch):
     """
-    自訂 collate 函數來處理包含 None 的 mask 與 next_timestep_data
+    自訂 collate 函數來處理包含 None 的 depth mask。
+    CA4D depth is kept as x1; DEM is kept as the spatial condition.
     batch: list of tuples from dataset.__getitem__
     """
-    # 分離出各個欄位
     flood_imgs = []
-    vx_imgs = []
-    vy_imgs = []
     dem_imgs = []
-    
     mask_floods = []
-    mask_vxs = []
-    mask_vys = []
-    
     rainfalls = []
     img_paths = []
-    vx_paths = []
-    vy_paths = []
-    
-    ca4ds = [] # 改名 spm -> ca4d
-    spms = []
-    
-    next_timestep_datas = []
+    ca4ds = []
     max_depths = []
     dem_ids = []
-    
+
     for item in batch:
-        # 根據回傳長度解包 (支援 16, 15, 13, 12 等舊格式相容)
-        if len(item) == 16:
-            # 最新格式 (同時包含 spm_image 和 ca4d_image)
-            (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
-             rainfall, img_path, vx_path, vy_path, spm, ca4d, next_data, max_depth, dem_id) = item
-        elif len(item) == 15:
-            # 舊格式 (含 ca4d, max_depth, dem_id)
-            (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
-             rainfall, img_path, vx_path, vy_path, ca4d, next_data, max_depth, dem_id) = item
-            spm = None
-        elif len(item) == 13:
-            # 更舊格式
-            (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
-             rainfall, img_path, vx_path, vy_path, ca4d, next_data) = item
-            spm = None
-            max_depth = 4.0
-            dem_id = -1
-        elif len(item) == 12:
-            (flood, vx, vy, dem, mask_flood, mask_vx, mask_vy, 
-             rainfall, img_path, vx_path, vy_path, ca4d) = item
-            spm = None
-            next_data = None
-            max_depth = 4.0
-            dem_id = -1
-        else:
+        if len(item) != 8:
             raise ValueError(f"Unexpected item length: {len(item)}")
-        
+        flood, dem, mask_flood, rainfall, img_path, ca4d, max_depth, dem_id = item
+
         flood_imgs.append(flood)
-        vx_imgs.append(vx)
-        vy_imgs.append(vy)
         dem_imgs.append(dem)
-        
-        # [MODIFIED] Mask 處理：支援 None
-        mask_floods.append(torch.from_numpy(mask_flood) if (mask_flood is not None and not torch.is_tensor(mask_flood)) else mask_flood)
-        mask_vxs.append(torch.from_numpy(mask_vx) if (mask_vx is not None and not torch.is_tensor(mask_vx)) else mask_vx)
-        mask_vys.append(torch.from_numpy(mask_vy) if (mask_vy is not None and not torch.is_tensor(mask_vy)) else mask_vy)
-        
+        mask_floods.append(
+            torch.from_numpy(mask_flood)
+            if mask_flood is not None and not torch.is_tensor(mask_flood)
+            else mask_flood
+        )
         rainfalls.append(rainfall)
         img_paths.append(img_path)
-        vx_paths.append(vx_path)
-        vy_paths.append(vy_path)
-        
         ca4ds.append(ca4d)
-        spms.append(spm)
-        
-        next_timestep_datas.append(next_data)
         max_depths.append(max_depth)
         dem_ids.append(dem_id)
-    
-    # Stack tensors. Depth-only PIFF datasets intentionally return None for vx/vy.
+
     flood_batch = torch.stack(flood_imgs)
-    vx_batch = None if all(vx is None for vx in vx_imgs) else torch.stack(vx_imgs)
-    vy_batch = None if all(vy is None for vy in vy_imgs) else torch.stack(vy_imgs)
     dem_batch = torch.stack(dem_imgs)
-    
-    # [MODIFIED] 若列表中包含 None，則 Batch 結果也為 None (避免 stack 報錯)
+
     if any(m is None for m in mask_floods):
         mask_flood_batch = None
     else:
         mask_flood_batch = torch.stack(mask_floods)
 
-    if any(m is None for m in mask_vxs):
-        mask_vx_batch = None
-    else:
-        mask_vx_batch = torch.stack(mask_vxs)
-
-    if any(m is None for m in mask_vys):
-        mask_vy_batch = None
-    else:
-        mask_vy_batch = torch.stack(mask_vys)
-    
-    # Rainfall
     if torch.is_tensor(rainfalls[0]):
         rainfall_batch = torch.stack(rainfalls)
     else:
         import numpy as np
         rainfall_batch = torch.from_numpy(np.array(rainfalls))
-    
-    # CA4D Stack (處理 None 的情況)
+
     if all(ca4d is None for ca4d in ca4ds):
-        # 如果所有 CA4D 都是 None (測試模式),返回 None
         ca4d_batch = None
     elif any(ca4d is None for ca4d in ca4ds):
-        # 如果部分是 None,用零填充
         reference_shape = next((c.shape for c in ca4ds if c is not None), None)
         ca4ds_filled = [ca4d if ca4d is not None else torch.zeros(reference_shape) for ca4d in ca4ds]
         ca4d_batch = torch.stack(ca4ds_filled)
     else:
-        # 所有都是有效的 tensor
         ca4d_batch = torch.stack(ca4ds)
 
-    # SPM Stack (處理 None 的情況)
-    if all(spm is None for spm in spms):
-        # 如果所有 SPM 都是 None (測試模式),返回 None
-        spm_batch = None
-    elif any(spm is None for spm in spms):
-        # 如果部分是 None,用零填充
-        reference_shape = next((c.shape for c in spms if c is not None), None)
-        spms_filled = [spm if spm is not None else torch.zeros(reference_shape) for spm in spms]
-        spm_batch = torch.stack(spms_filled)
-    else:
-        # 所有都是有效的 tensor
-        spm_batch = torch.stack(spms)
-
-    # Meta data
     max_depth_batch = torch.tensor(max_depths, dtype=torch.float32)
     dem_id_batch = torch.tensor(dem_ids, dtype=torch.long)
-    
-    return (flood_batch, vx_batch, vy_batch, dem_batch,
-            mask_flood_batch, mask_vx_batch, mask_vy_batch,
-            rainfall_batch, img_paths, vx_paths, vy_paths, spm_batch, ca4d_batch,
-            next_timestep_datas, max_depth_batch, dem_id_batch)
+
+    return (
+        flood_batch,
+        dem_batch,
+        mask_flood_batch,
+        rainfall_batch,
+        img_paths,
+        ca4d_batch,
+        max_depth_batch,
+        dem_id_batch,
+    )
 
 def setup_loader(dataset, batch_size, num_workers=4):
     loader = DataLoaderX(

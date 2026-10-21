@@ -113,9 +113,7 @@ def get_recon_imgs_fn(opt, nfe):
 
 def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
     # PIFF: x0 is TUFLOW depth, x1 is paired CA4D depth, cond is DEM.
-    
-    spm = None   # 初始化
-    dem_id = None
+
     image_name = None
     cond = None
     _ = None  # [FIXED] 初始化 _
@@ -127,117 +125,60 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
             return tensor[0:1, ...]
         return tensor
 
-    if isinstance(out, (list, tuple)) and len(out) >= 10:
-        if len(out) == 16:
-            # [LATEST FORMAT - DUAL MODEL]
-            (flood_image, vx_image, vy_image, dem_image, binary_mask, vx_binary_mask, 
-             vy_binary_mask, rainfall, image_path, vx_path, vy_path, spm_image, ca4d_image, 
-             next_timestep_data, max_depth, dem_id) = out
-            
-            if not getattr(ckpt_opt, 'ca4d', False) or ca4d_image is None:
-                raise ValueError("Depth-only PIFF sampling requires paired CA4D depth images")
+    if isinstance(out, (list, tuple)) and len(out) == 8:
+        (
+            flood_image,
+            dem_image,
+            binary_mask,
+            rainfall,
+            image_path,
+            ca4d_image,
+            max_depth,
+            dem_id,
+        ) = out
 
-            x1 = ensure_single_channel(ca4d_image).to(opt.device)
-            corrupt_img = ensure_single_channel(flood_image).to(opt.device)
-            cond = ensure_single_channel(dem_image).to(opt.device) if ckpt_opt.cond_x1 else None
-            
-            # 2. Mask: 強制設為 None (全圖預測)
-            mask = None 
-            
-            # 3. Label (Rainfall)
-            if not torch.is_tensor(rainfall):
-                y = torch.tensor(rainfall, dtype=torch.long)
-            else:
-                y = rainfall.long()
-            if y.dim() == 1:
-                y = y.unsqueeze(0)
-            y = y.clamp(min=0, max=99).to(opt.device)
-            
-            image_name = image_path
-            
-            # 4. SPM Guidance - [FIXED] 先計算 y_val，再在 if/else 中使用
-            if torch.is_tensor(y):
-                # y 是 [batch_size, 24] 或 [24]
-                if y.dim() > 1:
-                    # batch 模式：计算每个样本的总降雨量
-                    y_total = y.sum(dim=1)  # [batch_size]
-                else:
-                    # 单样本模式
-                    y_total = y.sum().unsqueeze(0)  # [1]
-            else:
-                y_total = torch.tensor([float(y)])
+        if not getattr(ckpt_opt, 'ca4d', False) or ca4d_image is None:
+            raise ValueError("Depth-only PIFF sampling requires paired CA4D depth images")
 
-            # [FIXED] 根據 checkpoint 設定決定是否使用 SPM
-            use_spm = getattr(ckpt_opt, 'spm', False)
-            if use_spm and spm_image is not None:
-                # 处理 batch 中的第一个样本用于 debug
-                dem_num = dem_id[0].item() if torch.is_tensor(dem_id) and dem_id.numel() > 1 else (dem_id.item() if torch.is_tensor(dem_id) else int(dem_id))
-                y_val = y_total[0].item() if y_total.numel() > 1 else y_total.item()
-                expected_spm_value = int(np.ceil(y_val / 5.0) * 5)
-                
-                print(f"[SPM Verify] batch_size={spm_image.shape[0]}, sample_0: total_rainfall={y_val}mm → expected_spm_value={expected_spm_value}, dem={dem_num}")
-                spm = spm_image.to(opt.device)
-            else:
-                spm = None
-            
-            _ = (vx_path, vy_path, next_timestep_data, max_depth)
-        
-        elif len(out) == 15:
-            # [LEGACY FORMAT - CA4D ONLY]
-            (flood_image, vx_image, vy_image, dem_image, binary_mask, vx_binary_mask, 
-             vy_binary_mask, rainfall, image_path, vx_path, vy_path, ca4d_image, 
-             next_timestep_data, max_depth, dem_id) = out
-            
-            # [FIXED] 明確設定 spm_image = None（此格式不含 SPM）
-            spm_image = None
-            
-            if not getattr(ckpt_opt, 'ca4d', False) or ca4d_image is None:
-                raise ValueError("Depth-only PIFF sampling requires paired CA4D depth images")
+        x1 = ensure_single_channel(ca4d_image).to(opt.device)
+        corrupt_img = ensure_single_channel(flood_image).to(opt.device)
+        cond = ensure_single_channel(dem_image).to(opt.device)
+        mask = None
 
-            x1 = ensure_single_channel(ca4d_image).to(opt.device)
-            corrupt_img = ensure_single_channel(flood_image).to(opt.device)
-            cond = ensure_single_channel(dem_image).to(opt.device) if ckpt_opt.cond_x1 else None
-            
-            mask = None 
-            
-            if not torch.is_tensor(rainfall):
-                y = torch.tensor(rainfall, dtype=torch.long)
-            else:
-                y = rainfall.long()
-            if y.dim() == 1:
-                y = y.unsqueeze(0)
-            y = y.clamp(min=0, max=99).to(opt.device)
-            
-            # [FIXED] 根據 checkpoint 設定決定是否使用 SPM
-            use_spm = getattr(ckpt_opt, 'spm', False)
-            if use_spm and spm_image is not None:
-                spm = spm_image.to(opt.device)
-            else:
-                spm = None
-            
-            _ = (vx_path, vy_path, next_timestep_data, max_depth)
-            
+        if not torch.is_tensor(rainfall):
+            y = torch.tensor(rainfall, dtype=torch.long)
         else:
-             raise ValueError(f"Unsupported dataset output format with length={len(out)}")
+            y = rainfall.long()
+        if y.dim() == 1:
+            y = y.unsqueeze(0)
+        y = y.clamp(min=0, max=99).to(opt.device)
 
+        image_name = image_path
+        _ = (max_depth, dem_id)
     else:
         # Standard ImageNet case (not used here)
         clean_img, y = out
         mask = None
         corrupt_img = corrupt_method(clean_img.to(opt.device))
         x1 = corrupt_img.to(opt.device)
-        cond = x1.detach() if ckpt_opt.cond_x1 else None
+        cond = x1.detach()
         image_name = None
 
     if ckpt_opt.add_x1_noise: 
         x1 = x1 + torch.randn_like(x1)
 
     # [FIXED] 確保所有變數都已定義後再返回
-    return corrupt_img, x1, mask, cond, y, image_name, spm, _
+    return corrupt_img, x1, mask, cond, y, image_name, _
 
 @torch.no_grad()
 def main(opt):
-    log = Logger(opt.global_rank, LOG_DIR)
+    model_name = Path(str(opt.ckpt)).name or "sampling"
+    log = Logger(
+        opt.global_rank,
+        LOG_DIR / model_name,
+        filename="sample_log.txt",
+        append=True,
+    )
 
     ckpt_arg = Path(opt.ckpt)
     if ckpt_arg.is_absolute() and ckpt_arg.exists():
@@ -254,11 +195,9 @@ def main(opt):
     corrupt_type = ckpt_opt.corrupt
     nfe = opt.nfe or ckpt_opt.interval-1
 
-    # ===== CRITICAL: Sync physical-model flags from checkpoint to sampling opt =====
-    # Dataset must know whether to load SPM / CA4D
-    opt.spm = getattr(ckpt_opt, "spm", False)
+    # Dataset must know whether to load paired CA4D data.
     opt.ca4d = getattr(ckpt_opt, "ca4d", False)
-    log.info(f"[Config Sync] Physical guidance from checkpoint: spm={opt.spm}, ca4d={opt.ca4d}")
+    log.info(f"[Config Sync] CA4D x1 from checkpoint: ca4d={opt.ca4d}; conditioning=DEM")
 
     # 如果命令列有指定 test_dem_list，使用它；否則從 ckpt_opt 繼承
     if opt.test_dem_list:
@@ -322,30 +261,18 @@ def main(opt):
     for loader_itr, out in enumerate(val_loader):
         print(f"[DEBUG] Processing batch {loader_itr + 1}/{len(val_loader)}")
 
-        corrupt_img, x1, mask, cond, y, image_name, spm, _ = compute_batch(ckpt_opt, corrupt_type, corrupt_method, out)
-        
-        # ===== CRITICAL SAFEGUARD: Check that physical guidance is actually loaded =====
-        if getattr(ckpt_opt, "spm", False) and spm is None:
-            raise RuntimeError(
-                "[SPM ERROR] Checkpoint was trained with SPM (--spm), but spm_image is None! "
-                "Check: (1) opt.spm={}, (2) SPM data path exists, (3) SPM filenames match pattern.".format(opt.spm)
-            )
+        corrupt_img, x1, mask, cond, y, image_name, _ = compute_batch(ckpt_opt, corrupt_type, corrupt_method, out)
         
         # ===== Debug print on first batch =====
         if loader_itr == 0:
             print(f"[DEBUG] x1 shape={x1.shape}, range=[{x1.min().item():.3f}, {x1.max().item():.3f}]")
             print(f"[DEBUG] y shape={y.shape}, range=[{y.min().item():.3f}, {y.max().item():.3f}]")
-            if spm is not None:
-                print(f"[DEBUG] spm shape={spm.shape}, range=[{spm.min().item():.3f}, {spm.max().item():.3f}]")
-            else:
-                print(f"[DEBUG] spm: None")
             if cond is not None:
                 print(f"[DEBUG] DEM cond shape={cond.shape}, range=[{cond.min().item():.3f}, {cond.max().item():.3f}]")
         
         xs, _ = runner.ddpm_sampling(
             ckpt_opt, x1, y, mask=mask, cond=cond, clip_denoise=opt.clip_denoise, nfe=nfe, 
-            verbose=opt.n_gpu_per_node==1, eval=True, ode_method=opt.sampling_method,
-            spm=spm
+            verbose=opt.n_gpu_per_node==1, eval=True, ode_method=opt.sampling_method
         )
         recon_img = xs[:, 0, ...].to(opt.device) 
 
@@ -392,8 +319,7 @@ if __name__ == '__main__':
     parser.add_argument("--test-dem-list",  type=str,  default=None,        help="Comma-separated list of test DEM numbers, e.g., '61,62,65'")
     parser.add_argument("--test-rain-list", type=str,  default=None,        help="Comma-separated list of test rainfall scenarios to use for testing, e.g., '9,20,33'")
     
-    # [ADDED] Physical guidance flags
-    parser.add_argument("--spm",            action="store_true", default=False, help="use SPM guidance during sampling (will be synced from checkpoint)")
+    # Physical-model input flag
     parser.add_argument("--ca4d",           action="store_true", default=False, help="use paired CA4D depth as x1 (synced from checkpoint)")
 
     # sample

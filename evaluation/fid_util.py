@@ -123,6 +123,6 @@ if __name__ == '__main__':
     parser.add_argument("--image-size",  type=int,  default=256)
     opt = parser.parse_args()
 
-    log = Logger(0, LOG_DIR)
+    log = Logger(0, LOG_DIR / "fid-reference", filename="fid_log.txt", append=True)
     log.info(f"======== Compute FID ref statistics: mode={opt.mode} ========")
     compute_fid_ref_stat(opt, log)

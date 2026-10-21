@@ -161,7 +161,13 @@ def log_metrices(opt):
     set_seed(opt.seed)
     if opt.gpu is not None:
         torch.cuda.set_device(opt.gpu)
-    log = Logger(0, LOG_DIR)
+    model_name = Path(str(opt.ckpt)).name or "metrics"
+    log = Logger(
+        0,
+        LOG_DIR / model_name,
+        filename="metrics_log.txt",
+        append=True,
+    )
 
     log.info(f"======== Compute metrices: {opt.ckpt=}, {opt.mode=} ========")
 

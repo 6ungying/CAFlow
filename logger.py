@@ -44,7 +44,7 @@ class TimeFilter(logging.Filter):
         return True
 
 class Logger(object):
-    def __init__(self, rank=0, log_dir=".log"):
+    def __init__(self, rank=0, log_dir=".log", filename="log.txt", append=False):
         # other libraries may set logging before arriving at this line.
         # by reloading logging, we can get rid of previous configs set by other libraries.
         from importlib import reload
@@ -53,7 +53,8 @@ class Logger(object):
         if self.rank == 0:
             os.makedirs(log_dir, exist_ok=True)
 
-            log_file = open(os.path.join(log_dir, "log.txt"), "w")
+            file_mode = "a" if append else "w"
+            log_file = open(os.path.join(log_dir, filename), file_mode)
             file_console = Console(file=log_file, width=150)
             logging.basicConfig(
                 level=logging.INFO,

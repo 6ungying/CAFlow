@@ -31,6 +31,7 @@ from i2sb.base.modules.encoders.modules import SpatialRescaler
 from torch.utils.data import DataLoader
 from corruption.mixture import floodDataset
 from .embedding import RainfallEmbedder
+from .training_plot import save_training_error_plot
 
 from ipdb import set_trace as debug
 
@@ -114,9 +115,7 @@ class Runner(object):
         log.info(f"[Diffusion] Built I2SB diffusion: steps={len(betas)}!")
 
         noise_levels = torch.linspace(opt.t0, opt.T, opt.interval, device=opt.device) * opt.interval
-        spm = bool(getattr(opt, 'spm', False))
-
-        self.net = Image256Net(log, noise_levels=noise_levels, use_fp16=opt.use_fp16, cond=opt.cond_x1, spm=spm)
+        self.net = Image256Net(log, noise_levels=noise_levels, use_fp16=opt.use_fp16, cond=True)
         self.rainfall_emb = RainfallEmbedder(256, 1)
         params = list(self.net.parameters()) + list(self.rainfall_emb.parameters())
         self.ema = ExponentialMovingAverage(params, decay=opt.ema)
@@ -125,9 +124,7 @@ class Runner(object):
             checkpoint = torch.load(opt.load, map_location="cpu")
             net = checkpoint['net']
             for key in net.keys():
-                if 'spm' in key:
-                    log.info(f"[Net] Detected SPM checkpoint key: {key}")
-                elif 'cond_adapter' in key:
+                if 'cond_adapter' in key:
                     log.info(f"[Net] Detected DEM conditioning checkpoint key: {key}")
 
             self.net.load_state_dict(checkpoint['net'])
@@ -172,10 +169,8 @@ class Runner(object):
 
     def sample_batch(self, opt, loader, corrupt_method):
         (
-            flood_img, vx_img, vy_img, dem_img,
-            mask_flood, mask_vx, mask_vy,
-            y, img_name, vx_img_name, vy_img_name,
-            spm, ca4d, next_timestep_data, max_depth, dem_id
+            flood_img, dem_img, mask_flood, y, img_name,
+            ca4d, max_depth, dem_id
         ) = next(loader)
 
         def ensure_single_channel(t):
@@ -211,18 +206,19 @@ class Runner(object):
         y      = y.to(device)
         x0     = clean_img.to(device)
         x1     = corrupt_img.to(device)
-        spm = spm.to(device) if spm is not None else None
-        cond = dem_img.to(device) if opt.cond_x1 else None
+        cond = dem_img.to(device)
 
         if getattr(opt, "add_x1_noise", False):
             x1 = x1 + torch.randn_like(x1)
 
-        return x0, x1, mask, y, cond, spm, next_timestep_data, max_depth, dem_id
+        return x0, x1, mask, y, cond, max_depth, dem_id
 
     def train(self, opt, train_dataset, val_dataset, corrupt_method):
         gradient_list = []
         embedder_gradient_list = []
+        loss_steps = []
         losses = []
+        loss_plot_path = opt.log_dir / opt.name / "training_error.png"
         
         self.writer = util.build_log_writer(opt)
         log = self.log
@@ -230,6 +226,9 @@ class Runner(object):
         ema = self.ema
         rainfall_embber = self.rainfall_emb
         optimizer, sched = build_optimizer_sched(opt, rainfall_embber, net, log)
+
+        if opt.global_rank == 0:
+            log.info(f"Training error plot will be saved to {loss_plot_path}.")
 
         train_loader = util.setup_loader(train_dataset, opt.microbatch)
         val_loader   = util.setup_loader(val_dataset,   opt.microbatch)
@@ -241,9 +240,10 @@ class Runner(object):
         n_inner_loop = opt.batch_size // (opt.global_size * opt.microbatch)
         for it in range(opt.num_itr):
             optimizer.zero_grad()
+            iteration_losses = []
 
             for _ in range(n_inner_loop):
-                x0, x1, mask, y, cond, spm, next_timestep_data, max_depth, dem_id = self.sample_batch(opt, train_loader, corrupt_method)
+                x0, x1, mask, y, cond, max_depth, dem_id = self.sample_batch(opt, train_loader, corrupt_method)
 
                 # ... (timestep sampling) ...
                 if opt.timestep_importance == 'continuous':
@@ -266,7 +266,7 @@ class Runner(object):
                     label = self.compute_label(step, x0, xt, x1)
 
                 rainfall_emb = rainfall_embber(y)
-                pred = net(xt, step, rainfall_emb, cond=cond, spm=spm)
+                pred = net(xt, step, rainfall_emb, cond=cond)
                 
                 if torch.isnan(xt).any() or torch.isnan(label).any() or torch.isnan(pred).any():
                     continue
@@ -280,7 +280,15 @@ class Runner(object):
                 total_loss = mse_loss
 
                 total_loss.backward()
-                losses.append(total_loss.item())
+                iteration_losses.append(total_loss.item())
+
+            if not iteration_losses:
+                log.warning(f"Skipped train_it {1+it}: every microbatch had a non-finite value.")
+                continue
+
+            mean_iteration_loss = float(np.mean(iteration_losses))
+            loss_steps.append(1 + it)
+            losses.append(mean_iteration_loss)
             
             torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=0.5)
             optimizer.step()
@@ -297,6 +305,7 @@ class Runner(object):
 
             if it % 100 == 0:
                 if opt.global_rank == 0:
+                    save_training_error_plot(loss_steps, losses, loss_plot_path)
                     torch.save({
                         "net": self.net.state_dict(),
                         'embedding': self.rainfall_emb.state_dict(),
@@ -308,10 +317,12 @@ class Runner(object):
                 if opt.distributed:
                     torch.distributed.barrier()
 
+        if opt.global_rank == 0 and losses:
+            save_training_error_plot(loss_steps, losses, loss_plot_path)
         self.writer.close()
 
     @torch.no_grad()
-    def ddpm_sampling(self, opt, x1, y, mask=None, cond=None, clip_denoise=False, nfe=None, log_count=10, verbose=True, eval=False, ode_method=None, spm=None):
+    def ddpm_sampling(self, opt, x1, y, mask=None, cond=None, clip_denoise=False, nfe=None, log_count=10, verbose=True, eval=False, ode_method=None):
         nfe = nfe or opt.interval-1
         steps = util.space_indices(opt.interval, nfe+1)
         log_count = min(len(steps)-1, log_count)
@@ -320,8 +331,6 @@ class Runner(object):
 
         x1 = x1.to(opt.device)
         if cond is not None: cond = cond.to(opt.device)
-        if spm is not None: spm = spm.to(opt.device)
-        
         # mask = None # (傳入的 mask 已經是 None，所以不需要特別設定)
 
         with self.ema.average_parameters():
@@ -330,11 +339,11 @@ class Runner(object):
             def pred_x0_fn(x1, xt, rainfall_emb, step, ode=None):
                 if not ode:
                     step = torch.full((xt.shape[0],), step, device=opt.device, dtype=torch.long)
-                    out = self.net(xt, step, rainfall_emb, cond=cond, spm=spm)
+                    out = self.net(xt, step, rainfall_emb, cond=cond)
                     return self.compute_pred_x0(step, xt, x1, out, clip_denoise=clip_denoise)
                 else:
                     step = torch.full((xt.shape[0],), step, device=opt.device, dtype=torch.float32)
-                    out = self.net(xt, step, rainfall_emb, cond=cond, spm=spm)
+                    out = self.net(xt, step, rainfall_emb, cond=cond)
                     return out
 
             rainfall_emb = self.rainfall_emb(y)
@@ -350,13 +359,11 @@ class Runner(object):
         log = self.log
         log.info(f"========== Evaluation started: iter={it} ==========")
 
-        img_clean, img_corrupt, mask, y, cond, spm, _, _, _ = self.sample_batch(opt, val_loader, corrupt_method)
+        img_clean, img_corrupt, mask, y, cond, _, _ = self.sample_batch(opt, val_loader, corrupt_method)
 
         x1 = img_corrupt.to(opt.device)
-        spm = spm.to(opt.device) if spm is not None else None
         xs, pred_x0s = self.ddpm_sampling(
-            opt, x1, y, mask=mask, cond=cond, clip_denoise=opt.clip_denoise, verbose=opt.global_rank==0,
-            spm=spm
+            opt, x1, y, mask=mask, cond=cond, clip_denoise=opt.clip_denoise, verbose=opt.global_rank==0
         )
 
         log.info("Collecting tensors ...")

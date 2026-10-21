@@ -201,11 +201,6 @@ def build_ckpt_option(opt, log, ckpt_path):
         ckpt_name = ckpt_path.name
         if 'sde' in ckpt_name.lower():
             ckpt_opt.ot_ode = False
-        if 'cond' in ckpt_name.lower() or 'x1' in ckpt_name.lower():
-            ckpt_opt.cond_x1 = True
-        else:
-            ckpt_opt.cond_x1 = False
-        
         # 設定預設值 (參考 train.py 的預設值)
         if not hasattr(ckpt_opt, 'corrupt'):
             ckpt_opt.corrupt = 'mixture'
@@ -214,7 +209,6 @@ def build_ckpt_option(opt, log, ckpt_path):
         if not hasattr(ckpt_opt, 'add_x1_noise'):
             ckpt_opt.add_x1_noise = False
         
-        # [MODIFIED] spm -> ca4d
         if not hasattr(ckpt_opt, 'ca4d'):
             ckpt_opt.ca4d = False
             
@@ -233,7 +227,7 @@ def build_ckpt_option(opt, log, ckpt_path):
         if not hasattr(ckpt_opt, 'ema'):
             ckpt_opt.ema = 0.999
             
-        log.info(f"Inferred settings: cond_x1={ckpt_opt.cond_x1}, ot_ode={ckpt_opt.ot_ode}, interval={ckpt_opt.interval}")
+        log.info(f"Inferred settings: conditioning=DEM, ot_ode={ckpt_opt.ot_ode}, interval={ckpt_opt.interval}")
 
     overwrite_keys = ["use_fp16", "device"]
     for k in overwrite_keys:

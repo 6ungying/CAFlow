@@ -36,54 +36,13 @@
             "args": [
                 "--ckpt", "flood-single-ca4d",
                 "--use-single-dem",
-                "--nfe", "10",
+                "--nfe", "20",
                 "--batch-size", "8",
                 "--clip-denoise"
             ],
             "presentation": {
                 "group": "1. Single DEM",
                 "order": 2
-            }
-        },
-        {
-            "name": "Train | Single DEM | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/train.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--name", "flood-single-spm01",
-                "--use-single-dem",
-                "--ca4d",
-                "--spm",
-                "--batch-size", "32"
-            ],
-            "presentation": {
-                "group": "1. Single DEM",
-                "order": 3
-            }
-        },
-        {
-            "name": "Sample | Single DEM | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-single-spm01",
-                "--use-single-dem",
-                "--nfe", "10",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "1. Single DEM",
-                "order": 4
             }
         },
 
@@ -122,53 +81,12 @@
             "args": [
                 "--ckpt", "flood-multi-ca4d",
                 "--test-dem-list", "8,29,62",
-                "--nfe", "10",
+                "--nfe", "20",
                 "--batch-size", "8"
             ],
             "presentation": {
                 "group": "2. Multi DEM - legacy split",
                 "order": 2
-            }
-        },
-        {
-            "name": "Train | Multi legacy | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/train.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--name", "flood-multi-spm",
-                "--test-dem-list", "8,29,62",
-                "--ca4d",
-                "--spm",
-                "--batch-size", "32"
-            ],
-            "presentation": {
-                "group": "2. Multi DEM - legacy split",
-                "order": 3
-            }
-        },
-        {
-            "name": "Sample | Multi legacy | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-multi-spm",
-                "--test-dem-list", "8,29,62",
-                "--nfe", "10",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "2. Multi DEM - legacy split",
-                "order": 4
             }
         },
 
@@ -218,49 +136,6 @@
                 "order": 2
             }
         },
-        {
-            "name": "Train | Multi current | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/train.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--name", "flood-multi-spm-new",
-                "--test-dem-list", "17,42,54",
-                "--test-rain-list", "9,20,33",
-                "--ca4d",
-                "--spm",
-                "--batch-size", "32"
-            ],
-            "presentation": {
-                "group": "3. Multi DEM - current split",
-                "order": 3
-            }
-        },
-        {
-            "name": "Sample | Multi current | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-multi-spm-new",
-                "--test-dem-list", "17,42,54",
-                "--test-rain-list", "9,20,33",
-                "--nfe", "10",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "3. Multi DEM - current split",
-                "order": 4
-            }
-        },
 
         // -----------------------------------------------------------------
         // Regional evaluation (uses checkpoints from the current split)
@@ -286,26 +161,6 @@
             }
         },
         {
-            "name": "Sample | Yilan | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-multi-spm-new",
-                "--use-yilan",
-                "--nfe", "10",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "4. Regional evaluation",
-                "order": 2
-            }
-        },
-        {
             "name": "Sample | Hsinchu | CA4D baseline",
             "type": "debugpy",
             "request": "launch",
@@ -323,26 +178,6 @@
             "presentation": {
                 "group": "4. Regional evaluation",
                 "order": 3
-            }
-        },
-        {
-            "name": "Sample | Hsinchu | CA4D + SPM",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-multi-spm-new",
-                "--use-hsinchu",
-                "--nfe", "10",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "4. Regional evaluation",
-                "order": 4
             }
         }
     ]

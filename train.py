@@ -69,11 +69,7 @@ def create_training_options():
     parser.add_argument("--ot-ode",         action="store_true",  default=False,           help="use OT-ODE model")
     parser.add_argument("--clip-denoise",   action="store_true",             help="clamp predicted image to [-1,1] at each")
 
-    # optional configs for conditional network
-    parser.add_argument("--cond-x1",        action="store_true",  default=True,           help="condition the network on the DEM")
-    
-    # Optional spatial guidance on top of the CA4D depth input.
-    parser.add_argument("--spm",            action="store_true",  default=False,          help="use SPM guidance (1-channel spatial prior map)")
+    # CA4D is x1; DEM conditioning is always enabled.
     parser.add_argument("--ca4d",           action="store_true",  default=True,           help="use paired CA4D depth as I2SB x1")
     
     parser.add_argument("--add-x1-noise",   action="store_true",             help="add noise to conditional network")
@@ -157,7 +153,8 @@ def create_training_options():
     return opt
 
 def main(opt):
-    log = Logger(opt.global_rank, opt.log_dir)
+    run_log_dir = opt.log_dir / opt.name
+    log = Logger(opt.global_rank, run_log_dir, append=True)
     log.info("=======================================================")
     log.info("         Image-to-Image Schrodinger Bridge")
     log.info("=======================================================")

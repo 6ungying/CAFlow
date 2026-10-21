@@ -8,12 +8,9 @@
 - x1：CA4D 水深，1 通道
 - cond：DEM 地形，1 通道
 - rainfall：24 個時間步的降雨序列
-- spm：選用的空間先驗圖，1 通道
 
-有效模型配置為：
-
-1. CA4D baseline
-2. CA4D + SPM
+模型固定以 CA4D 作為 I2SB x1，並以 DEM、降雨序列與 timestep
+作為條件。
 
 ## 資料集模式
 
@@ -28,7 +25,7 @@ CAFLOW_DATA_DIR。
 
 ## 訓練
 
-### 單一 DEM：CA4D baseline
+### 單一 DEM
 
 ~~~bash
 python train.py \
@@ -38,18 +35,7 @@ python train.py \
   --batch-size 32
 ~~~
 
-### 單一 DEM：CA4D + SPM
-
-~~~bash
-python train.py \
-  --name flood-single-spm01 \
-  --use-single-dem \
-  --ca4d \
-  --spm \
-  --batch-size 32
-~~~
-
-### 多 DEM：CA4D baseline
+### 多 DEM
 
 ~~~bash
 python train.py \
@@ -60,21 +46,10 @@ python train.py \
   --batch-size 32
 ~~~
 
-### 多 DEM：CA4D + SPM
-
-~~~bash
-python train.py \
-  --name flood-multi-spm-new \
-  --test-dem-list 17,42,54 \
-  --test-rain-list 9,20,33 \
-  --ca4d \
-  --spm \
-  --batch-size 32
-~~~
-
 ## 推論
 
-推論時會從 checkpoint 的 options.pkl 同步 CA4D 與 SPM 設定。
+推論時會從 checkpoint 的 options.pkl 同步 CA4D 設定；DEM 固定作為
+spatial conditioning。
 
 ### 單一 DEM
 
@@ -90,7 +65,7 @@ python sample.py \
 
 ~~~bash
 python sample.py \
-  --ckpt flood-multi-spm-new \
+  --ckpt flood-multi-ca4d-new \
   --test-dem-list 17,42,54 \
   --test-rain-list 9,20,33 \
   --nfe 10 \
@@ -113,6 +88,18 @@ results/<experiment-name>/
 ├── latest.pt
 └── options.pkl
 ~~~
+
+各模型的訓練紀錄與誤差圖：
+
+~~~text
+.log/<experiment-name>/
+├── log.txt
+└── training_error.png
+~~~
+
+`log.txt` 採追加寫入，同名模型續訓時會保留先前內容。Sampling 與
+metrics 則分別寫入同一模型資料夾下的 `sample_log.txt` 與
+`metrics_log.txt`，不會覆蓋訓練紀錄。
 
 推論影像：
 

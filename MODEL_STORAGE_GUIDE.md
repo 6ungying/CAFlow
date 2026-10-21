@@ -23,8 +23,8 @@ latest.pt 包含：
 - optimizer 狀態
 - learning-rate scheduler 狀態
 
-options.pkl 保存建立模型及資料集所需的訓練參數，例如 CA4D、
-SPM、資料切分與 batch size。
+options.pkl 保存建立模型及資料集所需的訓練參數，例如 CA4D、DEM
+conditioning、資料切分與 batch size。
 
 ## 繼續訓練
 

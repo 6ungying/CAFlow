@@ -12,7 +12,7 @@ def _path_from_env(variable: str, default: Path) -> Path:
     return Path(value).expanduser().resolve() if value else default.resolve()
 
 
-DATA_DIR = _path_from_env("CAFLOW_DATA_DIR", PROJECT_ROOT / "data")
+DATA_DIR = _path_from_env("CAFLOW_DATA_DIR", Path(r"C:\Users\Hank\Desktop\data"))
 RESULTS_DIR = _path_from_env("CAFLOW_RESULTS_DIR", PROJECT_ROOT / "results")
 LOG_DIR = _path_from_env("CAFLOW_LOG_DIR", PROJECT_ROOT / ".log")
 OUTPUT_DIR = _path_from_env("CAFLOW_OUTPUT_DIR", PROJECT_ROOT / "outputs")

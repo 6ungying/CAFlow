@@ -1,6 +1,7 @@
 {
     "git.enabled": true,
-    "git.path": "/usr/bin/git",
+    "python.defaultInterpreterPath": "C:\\Users\\Hank\\miniconda3\\envs\\flooddiff\\python.exe",
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

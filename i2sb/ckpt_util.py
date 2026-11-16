@@ -179,60 +179,18 @@ def download_ckpt(ckpt_dir=DATA_DIR):
     # download_adm_image256_cond_ckpt(ckpt_dir=ckpt_dir)
 
 def build_ckpt_option(opt, log, ckpt_path):
+    from .training_contract import OBJECTIVE
+
     ckpt_path = Path(ckpt_path)
     opt_pkl_path = ckpt_path / "options.pkl"
-    assert opt_pkl_path.exists()
-    
-    # 嘗試載入 pickle,如果失敗則使用當前 opt
-    try:
-        with open(opt_pkl_path, "rb") as f:
-            ckpt_opt = pickle.load(f)
-
-        log.info(f"Loaded options from {opt_pkl_path=}!")
-    except (ModuleNotFoundError, AttributeError, ImportError) as e:
-        log.warning(f"Failed to load checkpoint options: {e}")
-        log.warning("Using current opt as fallback - this may work if config is compatible")
-        
-        # 使用當前 opt 作為 fallback
-        import copy
-        ckpt_opt = copy.deepcopy(opt)
-        
-        # 從 checkpoint 名稱推斷一些關鍵設定
-        ckpt_name = ckpt_path.name
-        if 'sde' in ckpt_name.lower():
-            ckpt_opt.ot_ode = False
-        # 設定預設值 (參考 train.py 的預設值)
-        if not hasattr(ckpt_opt, 'corrupt'):
-            ckpt_opt.corrupt = 'mixture'
-        if not hasattr(ckpt_opt, 'interval'):
-            ckpt_opt.interval = 1000
-        if not hasattr(ckpt_opt, 'add_x1_noise'):
-            ckpt_opt.add_x1_noise = False
-        
-        if not hasattr(ckpt_opt, 'ca4d'):
-            ckpt_opt.ca4d = False
-            
-        if not hasattr(ckpt_opt, 'beta_max'):
-            ckpt_opt.beta_max = 0.1
-        if not hasattr(ckpt_opt, 't0'):
-            ckpt_opt.t0 = 1e-4
-        if not hasattr(ckpt_opt, 'T'):
-            ckpt_opt.T = 1.0
-        if not hasattr(ckpt_opt, 'clip_denoise'):
-            ckpt_opt.clip_denoise = False
-        if not hasattr(ckpt_opt, 'image_size'):
-            ckpt_opt.image_size = 256
-        if not hasattr(ckpt_opt, 'latent_space'):
-            ckpt_opt.latent_space = False
-        if not hasattr(ckpt_opt, 'ema'):
-            ckpt_opt.ema = 0.999
-            
-        log.info(f"Inferred settings: conditioning=DEM, ot_ode={ckpt_opt.ot_ode}, interval={ckpt_opt.interval}")
-
-    overwrite_keys = ["use_fp16", "device"]
-    for k in overwrite_keys:
-        assert hasattr(opt, k)
-        setattr(ckpt_opt, k, getattr(opt, k))
-
-    ckpt_opt.load = ckpt_path / "latest.pt"
+    with opt_pkl_path.open("rb") as handle:
+        ckpt_opt = pickle.load(handle)
+    if getattr(ckpt_opt, 'objective', None) != OBJECTIVE:
+        raise ValueError('Legacy checkpoint has no compatible I2SB objective metadata. Start a new discrete I2SB experiment.')
+    for key in ("use_fp16", "device"):
+        setattr(ckpt_opt, key, getattr(opt, key))
+    ckpt_opt.load = ckpt_path / getattr(opt, 'checkpoint', 'best.pt')
+    if not ckpt_opt.load.is_file():
+        raise FileNotFoundError(f'Checkpoint not found: {ckpt_opt.load}')
+    log.info(f'Loading {ckpt_opt.load}')
     return ckpt_opt

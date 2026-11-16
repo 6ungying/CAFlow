@@ -1,11 +1,8 @@
 {
     "version": "0.2.0",
     "configurations": [
-        // -----------------------------------------------------------------
-        // Single DEM
-        // -----------------------------------------------------------------
         {
-            "name": "Train | Single DEM | CA4D baseline",
+            "name": "Train | Single DEM | I2SB",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
@@ -14,10 +11,8 @@
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--name", "flood-single-ca4d",
-                "--use-single-dem",
-                "--ca4d",
-                "--batch-size", "32"
+                "--ckpt", "flood-single-i2sb",
+                "--use-single-dem"
             ],
             "presentation": {
                 "group": "1. Single DEM",
@@ -25,32 +20,43 @@
             }
         },
         {
-            "name": "Sample | Single DEM | CA4D baseline",
+            "name": "Resume | Single DEM | I2SB",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
+            "program": "${workspaceFolder}/train.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--ckpt", "flood-single-ca4d",
-                "--use-single-dem",
-                "--nfe", "20",
-                "--batch-size", "8",
-                "--clip-denoise"
+                "--ckpt", "flood-single-i2sb",
+                "--use-single-dem"
             ],
             "presentation": {
                 "group": "1. Single DEM",
                 "order": 2
             }
         },
-
-        // -----------------------------------------------------------------
-        // Multi DEM: legacy split (test DEMs 8, 29, and 62)
-        // -----------------------------------------------------------------
         {
-            "name": "Train | Multi legacy | CA4D baseline",
+            "name": "Sample | Single DEM | I2SB",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/sample.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "args": [
+                "--ckpt", "flood-single-i2sb",
+                "--use-single-dem"
+            ],
+            "presentation": {
+                "group": "1. Single DEM",
+                "order": 3
+            }
+        },
+        {
+            "name": "Train | Multi legacy | I2SB",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
@@ -59,10 +65,8 @@
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--name", "flood-multi-ca4d",
-                "--test-dem-list", "8,29,62",
-                "--ca4d",
-                "--batch-size", "32"
+                "--name", "flood-multi-i2sb",
+                "--test-dem-list", "8,29,62"
             ],
             "presentation": {
                 "group": "2. Multi DEM - legacy split",
@@ -70,32 +74,7 @@
             }
         },
         {
-            "name": "Sample | Multi legacy | CA4D baseline",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "subProcess": true,
-            "args": [
-                "--ckpt", "flood-multi-ca4d",
-                "--test-dem-list", "8,29,62",
-                "--nfe", "20",
-                "--batch-size", "8"
-            ],
-            "presentation": {
-                "group": "2. Multi DEM - legacy split",
-                "order": 2
-            }
-        },
-
-        // -----------------------------------------------------------------
-        // Multi DEM: current split
-        // Test DEMs: 17, 42, 54; test rainfall scenarios: 9, 20, 33
-        // -----------------------------------------------------------------
-        {
-            "name": "Train | Multi current | CA4D baseline",
+            "name": "Resume | Multi legacy | I2SB",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
@@ -104,11 +83,45 @@
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--name", "flood-multi-ca4d-new",
+                "--ckpt", "flood-multi-i2sb",
+                "--test-dem-list", "8,29,62"
+            ],
+            "presentation": {
+                "group": "2. Multi DEM - legacy split",
+                "order": 2
+            }
+        },
+        {
+            "name": "Sample | Multi legacy | I2SB",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/sample.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "args": [
+                "--ckpt", "flood-multi-i2sb",
+                "--test-dem-list", "8,29,62"
+            ],
+            "presentation": {
+                "group": "2. Multi DEM - legacy split",
+                "order": 3
+            }
+        },
+        {
+            "name": "Train | Multi current | I2SB",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "args": [
+                "--name", "flood-multi-i2sb-new",
                 "--test-dem-list", "17,42,54",
-                "--test-rain-list", "9,20,33",
-                "--ca4d",
-                "--batch-size", "32"
+                "--test-rain-list", "9,20,33"
             ],
             "presentation": {
                 "group": "3. Multi DEM - current split",
@@ -116,32 +129,26 @@
             }
         },
         {
-            "name": "Sample | Multi current | CA4D baseline",
+            "name": "Resume | Multi current | I2SB",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/sample.py",
+            "program": "${workspaceFolder}/train.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--ckpt", "flood-multi-ca4d-new",
+                "--ckpt", "flood-multi-i2sb-new",
                 "--test-dem-list", "17,42,54",
-                "--test-rain-list", "9,20,33",
-                "--nfe", "10",
-                "--batch-size", "8"
+                "--test-rain-list", "9,20,33"
             ],
             "presentation": {
                 "group": "3. Multi DEM - current split",
                 "order": 2
             }
         },
-
-        // -----------------------------------------------------------------
-        // Regional evaluation (uses checkpoints from the current split)
-        // -----------------------------------------------------------------
         {
-            "name": "Sample | Yilan | CA4D baseline",
+            "name": "Sample | Multi current | I2SB",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/sample.py",
@@ -150,10 +157,27 @@
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--ckpt", "flood-multi-ca4d-new",
-                "--use-yilan",
-                "--nfe", "10",
-                "--batch-size", "8"
+                "--ckpt", "flood-multi-i2sb-new",
+                "--test-dem-list", "17,42,54",
+                "--test-rain-list", "9,20,33"
+            ],
+            "presentation": {
+                "group": "3. Multi DEM - current split",
+                "order": 3
+            }
+        },
+        {
+            "name": "Sample | Yilan | I2SB",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/sample.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "args": [
+                "--ckpt", "flood-multi-i2sb-new",
+                "--use-yilan"
             ],
             "presentation": {
                 "group": "4. Regional evaluation",
@@ -161,7 +185,7 @@
             }
         },
         {
-            "name": "Sample | Hsinchu | CA4D baseline",
+            "name": "Sample | Hsinchu | I2SB",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/sample.py",
@@ -170,10 +194,8 @@
             "justMyCode": true,
             "subProcess": true,
             "args": [
-                "--ckpt", "flood-multi-ca4d-new",
-                "--use-hsinchu",
-                "--nfe", "10",
-                "--batch-size", "8"
+                "--ckpt", "flood-multi-i2sb-new",
+                "--use-hsinchu"
             ],
             "presentation": {
                 "group": "4. Regional evaluation",

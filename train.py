@@ -44,7 +44,7 @@ def create_training_options():
     # --------------- basic ---------------
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed",           type=int,   default=0)
-    parser.add_argument("--name",           type=str,   default='flood-single-ca4d',        help="experiment ID")
+    parser.add_argument("--name",           type=str,   default=None, help="experiment ID; defaults to a new I2SB run name")
     parser.add_argument("--ckpt",           type=str,   default=None,        help="resumed checkpoint name")
     parser.add_argument("--gpu",            type=int,   default=None,        help="set only if you wish to run on a particular device; use -1 for CPU")
     parser.add_argument("--n-gpu-per-node", type=int,   default=1,           help="number of gpu on each node")
@@ -59,7 +59,7 @@ def create_training_options():
     parser.add_argument("--dataset-dir", type=Path, default=DATA_DIR / "dems", help="path to dataset")
     parser.add_argument("--latent-space", action="store_true", default=False, help="use latent space model")
     parser.add_argument("--normalize-latent", action="store_true", default=False, help="normalize latent space")
-    parser.add_argument("--timestep-importance", type=str, default='continuous', help="use timestep importance")
+    parser.add_argument("--timestep-importance", choices=['discrete'], default='discrete', help="I2SB discrete residual objective")
     parser.add_argument("--corrupt",        type=str,   default='mixture',        help="restoration task")
     parser.add_argument("--t0",             type=float, default=1e-4,        help="sigma start time in network parametrization")
     parser.add_argument("--T",              type=float, default=1.,          help="sigma end time in network parametrization")
@@ -75,8 +75,8 @@ def create_training_options():
     parser.add_argument("--add-x1-noise",   action="store_true",             help="add noise to conditional network")
 
     # --------------- optimizer and loss ---------------
-    parser.add_argument("--batch-size",     type=int,   default=128)
-    parser.add_argument("--microbatch",     type=int,   default=2,           help="accumulate gradient over microbatch until full batch-size")
+    parser.add_argument("--batch-size",     type=int,   default=32)
+    parser.add_argument("--microbatch",     type=int,   default=4,           help="accumulate gradient over microbatch until full batch-size")
     parser.add_argument("--num-itr",        type=int,   default=1000000,     help="training iteration")
     parser.add_argument("--lr",             type=float, default=5e-5,        help="learning rate")
     parser.add_argument("--lr-gamma",       type=float, default=0.99,        help="learning rate decay ratio")
@@ -86,7 +86,7 @@ def create_training_options():
 
     # --------------- path and logging ---------------
     parser.add_argument("--log-dir",        type=Path,  default=LOG_DIR,      help="path to log std outputs and writer data")
-    parser.add_argument("--log-writer",     type=str,   default='tensorbard',        help="log writer: can be tensorbard, wandb, or None")
+    parser.add_argument("--log-writer", choices=['tensorboard', 'wandb', 'none'], default='tensorboard')
     parser.add_argument("--wandb-api-key",  type=str,   default=None,        help="unique API key of your W&B account; see https://wandb.ai/authorize")
     parser.add_argument("--wandb-user",     type=str,   default=None,        help="user name of your W&B account")
     
@@ -96,8 +96,35 @@ def create_training_options():
     # --------------- test DEM configuration ---------------
     parser.add_argument("--test-dem-list",  type=str,   default=None,        help="Comma-separated list of test DEM numbers to exclude from training, e.g., '8,29,62'")
     parser.add_argument("--test-rain-list", type=str,   default=None,        help="Comma-separated list of test rainfall scenarios to exclude from training, e.g., '9,20,33'")
+    parser.add_argument('--val-rain-list', type=str, default=None, help='Held-out training rainfall event IDs, comma-separated')
+    parser.add_argument('--val-fraction', type=float, default=0.1)
+    parser.add_argument('--split-seed', type=int, default=0)
+    parser.add_argument('--validation-seed', type=int, default=12345)
+    parser.add_argument('--val-every', type=int, default=1000, help='Validate the complete holdout every N optimizer steps')
+    parser.add_argument('--val-nfe', type=int, default=10)
+    parser.add_argument('--num-workers', type=int, default=4)
+    parser.add_argument('--single-max-depth', type=float, default=4.0, help='Single DEM PNG maximum depth in metres; white is dry')
+    parser.add_argument('--grad-clip', type=float, default=0.5)
 
     opt = parser.parse_args()
+    if opt.n_gpu_per_node != 1 or opt.num_proc_node != 1:
+        parser.error('This training loop currently supports one GPU only.')
+    if opt.interval < 2 or opt.interval % 2:
+        parser.error('--interval must be an even integer >= 2.')
+    if opt.image_size != 256 or opt.beta_max <= 0:
+        parser.error('This backbone requires image-size=256 and a positive beta-max.')
+    if not (1 <= opt.val_nfe < opt.interval) or opt.val_every < 1:
+        parser.error('Require 1 <= val-nfe < interval and val-every >= 1.')
+    if opt.microbatch < 1 or opt.batch_size < 1 or opt.batch_size % opt.microbatch:
+        parser.error('Batch size must be positive and divisible by microbatch.')
+    if opt.num_workers < 0 or opt.num_itr < 1 or opt.single_max_depth <= 0 or opt.grad_clip <= 0:
+        parser.error('Invalid workers, iterations, depth scale or gradient clipping value.')
+    if opt.latent_space or opt.normalize_latent or opt.clip_denoise or opt.add_x1_noise or opt.eval:
+        parser.error('The corrected depth I2SB path uses pixel space without [-1,1] clipping, x1 noise or --eval.')
+    if not 0 < opt.val_fraction < 1:
+        parser.error('--val-fraction must be between zero and one.')
+    opt.val_rain_list = ([int(x.strip()) for x in opt.val_rain_list.split(',')]
+                         if opt.val_rain_list else None)
     
     # ========= process test DEM list =========
     if opt.test_dem_list:
@@ -128,7 +155,7 @@ def create_training_options():
     print("=" * 60)
     
     if opt.name is None:
-        opt.name = opt.corrupt
+        opt.name = opt.ckpt or ('flood-single-i2sb' if opt.use_single_dem else 'flood-multi-i2sb')
     opt.distributed = opt.n_gpu_per_node > 1
     opt.use_fp16 = False # disable fp16 for training
 
@@ -137,9 +164,9 @@ def create_training_options():
         opt.ngc_job_id = os.environ["NGC_JOB_ID"]
 
     # ========= path handle =========
-    os.makedirs(opt.log_dir, exist_ok=True)
     opt.ckpt_path = RESULTS_DIR / opt.name
-    os.makedirs(opt.ckpt_path, exist_ok=True)
+    if opt.ckpt_path.exists() and any(opt.ckpt_path.iterdir()) and opt.ckpt is None:
+        parser.error('Experiment directory already contains files; use a new --name or explicit --ckpt.')
 
     if opt.ckpt is not None:
         ckpt_file = RESULTS_DIR / opt.ckpt / "latest.pt"
@@ -165,11 +192,22 @@ def main(opt):
     if opt.use_single_dem:
         log.info("Using single DEM flood dataset for training")
         train_dataset = singleDEMFloodDataset(opt, val=False, test=False)
-        val_dataset   = singleDEMFloodDataset(opt, val=False, test=False)
+        val_dataset   = singleDEMFloodDataset(opt, val=True, test=False)
     else:
         log.info("Using multi-DEM flood dataset for training")
         train_dataset = floodDataset(opt, val=False)
         val_dataset   = floodDataset(opt, val=True)
+
+    rain_index = 0 if opt.use_single_dem else 1
+    opt.train_rain_ids = sorted({p[rain_index] for p in train_dataset.cell_positions})
+    opt.val_rain_ids = sorted({p[rain_index] for p in val_dataset.cell_positions})
+    if not opt.train_rain_ids or not opt.val_rain_ids:
+        raise ValueError('Train/validation split is empty after checking paired files.')
+    if set(opt.train_rain_ids) & set(opt.val_rain_ids):
+        raise ValueError('Rainfall event leakage between training and validation.')
+    log.info(f'Train: {len(train_dataset)} samples, rainfall={opt.train_rain_ids}')
+    log.info(f'Validation: {len(val_dataset)} samples, rainfall={opt.val_rain_ids}')
+    os.makedirs(opt.ckpt_path, exist_ok=True)
 
     corrupt_method = build_corruption(opt, log)
 

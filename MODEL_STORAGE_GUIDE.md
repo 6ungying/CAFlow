@@ -7,6 +7,7 @@
 ~~~text
 results/<experiment-name>/
 ├── latest.pt
+├── best.pt
 └── options.pkl
 ~~~
 
@@ -28,8 +29,8 @@ conditioning、資料切分與 batch size。
 
 ## 繼續訓練
 
-~~~bash
-python train.py --ckpt <checkpoint-name>
+~~~powershell
+python train.py --ckpt "checkpoint-name"
 ~~~
 
 程式會讀取：
@@ -40,17 +41,20 @@ results/<checkpoint-name>/latest.pt
 
 例如：
 
-~~~bash
-python train.py --ckpt flood-multi-ca4d-new
+~~~powershell
+python train.py --ckpt flood-multi-i2sb-new --test-dem-list 17,42,54 --test-rain-list 9,20,33
 ~~~
 
 ## 推論
 
-~~~bash
-python sample.py --ckpt <checkpoint-name> --nfe 10 --batch-size 8
+~~~powershell
+python sample.py --ckpt "checkpoint-name" --nfe 10 --batch-size 8
 ~~~
 
 也可直接把 checkpoint 資料夾的完整路徑傳給 --ckpt。
+
+推論預設讀取 `best.pt`；要讀取最新訓練狀態可加 `--checkpoint latest.pt`。
+舊 continuous checkpoint 不能沿用為新版離散 I2SB 訓練或推論，請另建實驗。
 
 ## 備份
 

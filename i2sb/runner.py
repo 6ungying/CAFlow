@@ -16,11 +16,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torch_ema import ExponentialMovingAverage
 import torchvision.utils as tu
-import torchmetrics
 from tqdm import tqdm
 
 import distributed_util as dist_util
-from evaluation import build_resnet50
 from matplotlib import pyplot as plt
 
 from . import util
@@ -32,6 +30,8 @@ from torch.utils.data import DataLoader
 from corruption.mixture import floodDataset
 from .embedding import RainfallEmbedder
 from .training_plot import save_training_error_plot
+from .depth_metrics import DepthMetrics, depth_metres
+from .training_contract import OBJECTIVE, training_contract, check_checkpoint_contract
 
 from ipdb import set_trace as debug
 
@@ -56,6 +56,17 @@ def build_optimizer_sched(opt, rainfall_embber, net, log):
             sched.load_state_dict(checkpoint["sched"])
 
     return optimizer, sched
+
+def normalize_and_clip_gradients(parameters, valid_samples, max_norm):
+    if valid_samples <= 0:
+        raise ValueError("valid_samples must be positive.")
+    parameters = list(parameters)
+    for parameter in parameters:
+        if parameter.grad is not None:
+            parameter.grad.div_(valid_samples)
+    # The joint norm check rejects NaN/Inf before clipping, with one GPU sync.
+    return torch.nn.utils.clip_grad_norm_(parameters, max_norm, error_if_nonfinite=True)
+
 
 def make_beta_schedule(n_timestep=1000, linear_start=1e-4, linear_end=2e-2):
     betas = (
@@ -92,6 +103,17 @@ class Runner(object):
     def __init__(self, opt, log, save_opt=True):
         super(Runner,self).__init__()
 
+        if getattr(opt, 'timestep_importance', None) != 'discrete':
+            raise ValueError('Only discrete I2SB residual checkpoints are supported; retrain legacy continuous runs.')
+        if opt.clip_denoise or opt.latent_space or opt.add_x1_noise:
+            raise ValueError('Depth I2SB requires pixel space without [-1,1] clipping or extra x1 noise.')
+        opt.objective = OBJECTIVE
+        checkpoint = torch.load(opt.load, map_location='cpu') if opt.load else None
+        if checkpoint is not None:
+            check_checkpoint_contract(checkpoint, opt)
+        self.start_step = checkpoint.get('step', 0) if checkpoint is not None else 0
+        self.best_rmse = checkpoint.get('best_rmse_m', float('inf')) if checkpoint is not None else float('inf')
+
         self.opt = opt
         self.model_config = create_model_config()
         if opt.latent_space:
@@ -121,7 +143,6 @@ class Runner(object):
         self.ema = ExponentialMovingAverage(params, decay=opt.ema)
 
         if opt.load:
-            checkpoint = torch.load(opt.load, map_location="cpu")
             net = checkpoint['net']
             for key in net.keys():
                 if 'cond_adapter' in key:
@@ -143,7 +164,7 @@ class Runner(object):
 
         self.log = log
 
-        if opt.eval:
+        if opt.eval and opt.normalize_latent:
             self.net.ori_latent_mean = self.net.ori_latent_mean.to(opt.device)
             self.net.ori_latent_std = self.net.ori_latent_std.to(opt.device)
             self.net.cond_latent_mean = self.net.cond_latent_mean.to(opt.device)
@@ -164,7 +185,8 @@ class Runner(object):
     def compute_pred_x0(self, step, xt, x1, net_out, clip_denoise=False):
         std_fwd = self.diffusion.get_std_fwd(step, xdim=xt.shape[1:])
         pred_x0 = xt - std_fwd * net_out
-        if clip_denoise: pred_x0.clamp_(-1., 1.)
+        if clip_denoise:
+            raise ValueError('Depth z-scores are not bounded by [-1,1]; disable clip_denoise.')
         return pred_x0
 
     def sample_batch(self, opt, loader, corrupt_method):
@@ -194,14 +216,6 @@ class Runner(object):
         # 避免後續程式碼誤用 mask 進行運算
         mask = None
 
-        # NaN 處理
-        if torch.isnan(clean_img).any():
-            flood_nan = torch.isnan(clean_img[:, 0:1])
-            clean_img[:, 0:1] = torch.where(flood_nan, torch.tensor(0.01, device=clean_img.device), clean_img[:, 0:1])
-
-        if torch.isnan(corrupt_img).any():
-             corrupt_img = torch.nan_to_num(corrupt_img, nan=0.0)
-
         device = opt.device
         y      = y.to(device)
         x0     = clean_img.to(device)
@@ -214,191 +228,162 @@ class Runner(object):
         return x0, x1, mask, y, cond, max_depth, dem_id
 
     def train(self, opt, train_dataset, val_dataset, corrupt_method):
-        gradient_list = []
-        embedder_gradient_list = []
-        loss_steps = []
-        losses = []
-        loss_plot_path = opt.log_dir / opt.name / "training_error.png"
-        
+        if opt.global_size != 1:
+            raise ValueError("Distributed gradient synchronization is not implemented.")
         self.writer = util.build_log_writer(opt)
-        log = self.log
-        net = self.net
-        ema = self.ema
-        rainfall_embber = self.rainfall_emb
-        optimizer, sched = build_optimizer_sched(opt, rainfall_embber, net, log)
+        optimizer, sched = build_optimizer_sched(opt, self.rainfall_emb, self.net, self.log)
+        train_loader = util.setup_loader(train_dataset, opt.microbatch, opt.num_workers)
+        if len(train_dataset) < opt.microbatch:
+            raise ValueError("Training dataset is smaller than microbatch.")
+        val_loader = DataLoader(
+            val_dataset, batch_size=opt.microbatch, shuffle=False,
+            pin_memory=True, num_workers=opt.num_workers, drop_last=False,
+            collate_fn=util.custom_collate_fn,
+        )
+        parameters = list(self.net.parameters()) + list(self.rainfall_emb.parameters())
+        inner_steps = opt.batch_size // opt.microbatch
+        loss_steps, losses = [], []
+        loss_plot_path = opt.log_dir / opt.name / "training_error.png"
+        step = self.start_step
 
-        if opt.global_rank == 0:
-            log.info(f"Training error plot will be saved to {loss_plot_path}.")
+        def save_checkpoint(filename):
+            torch.save({
+                "net": self.net.state_dict(), "embedding": self.rainfall_emb.state_dict(),
+                "ema": self.ema.state_dict(), "optimizer": optimizer.state_dict(),
+                "sched": sched.state_dict() if sched is not None else None,
+                "step": step, "best_rmse_m": self.best_rmse,
+                "training_contract": training_contract(opt),
+            }, opt.ckpt_path / filename)
 
-        train_loader = util.setup_loader(train_dataset, opt.microbatch)
-        val_loader   = util.setup_loader(val_dataset,   opt.microbatch)
-
-        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=2).to(opt.device)
-        self.resnet = build_resnet50().to(opt.device)
-
-        net.train()
-        n_inner_loop = opt.batch_size // (opt.global_size * opt.microbatch)
-        for it in range(opt.num_itr):
-            optimizer.zero_grad()
-            iteration_losses = []
-
-            for _ in range(n_inner_loop):
-                x0, x1, mask, y, cond, max_depth, dem_id = self.sample_batch(opt, train_loader, corrupt_method)
-
-                # ... (timestep sampling) ...
-                if opt.timestep_importance == 'continuous':
-                    t1, t0 = 1, 0
-                    step = torch.rand((x0.shape[0],)) * (t1 - t0)
-                    step = step.view(-1, 1, 1, 1).to(x0.device)
-                    if opt.ot_ode:
-                        xt = (1-step) * x0 + step * x1
-                        label = x1 - x0
-                    if not opt.ot_ode:
-                        var = step * (1-step)
-                        rand = torch.randn_like(x0) * 0.1
-                        xt = (1-step) * x0 + step * x1 + rand 
-                        dvar = (1-2*step) / (2*var.sqrt() + 1e-2) 
-                        label = x1 - x0 
-                else:
-                    step = torch.randint(0, opt.interval, (x0.shape[0],))
-                    step = step.to(x0.device)
-                    xt = self.diffusion.q_sample(step, x0, x1, ot_ode=opt.ot_ode)
-                    label = self.compute_label(step, x0, xt, x1)
-
-                rainfall_emb = rainfall_embber(y)
-                pred = net(xt, step, rainfall_emb, cond=cond)
-                
-                if torch.isnan(xt).any() or torch.isnan(label).any() or torch.isnan(pred).any():
+        try:
+            self.net.train()
+            self.rainfall_emb.train()
+            for attempt in range(self.start_step, opt.num_itr):
+                optimizer.zero_grad(set_to_none=True)
+                weighted_loss, valid_samples = 0.0, 0
+                for _ in range(inner_steps):
+                    x0, x1, _, y, cond, _, _ = self.sample_batch(opt, train_loader, corrupt_method)
+                    if not all(torch.isfinite(t).all() for t in (x0, x1, cond, y)):
+                        self.log.warning('Skipped non-finite input microbatch.')
+                        continue
+                    indices = torch.randint(opt.interval, (x0.shape[0],), device=x0.device)
+                    xt = self.diffusion.q_sample(indices, x0, x1, ot_ode=opt.ot_ode)
+                    label = self.compute_label(indices, x0, xt, x1)
+                    pred = self.net(xt, indices, self.rainfall_emb(y), cond=cond)
+                    loss = F.mse_loss(pred, label)
+                    if not torch.isfinite(loss):
+                        self.log.warning('Skipped non-finite loss microbatch.')
+                        continue
+                    count = x0.shape[0]
+                    # Accumulate sample sums, then divide by the actual valid count.
+                    (loss * count).backward()
+                    weighted_loss += loss.detach().item() * count
+                    valid_samples += count
+                if not valid_samples:
+                    self.log.warning('Skipped optimizer update: no valid samples.')
                     continue
-
-                # [MODIFIED] MSE Loss: 直接計算 (等同於 mask=None)，不套用任何遮罩
-                mse_loss = F.mse_loss(pred, label)
-                
-                if torch.isnan(mse_loss) or torch.isinf(mse_loss):
+                try:
+                    grad_norm = normalize_and_clip_gradients(parameters, valid_samples, opt.grad_clip)
+                except (FloatingPointError, RuntimeError):
+                    optimizer.zero_grad(set_to_none=True)
+                    self.log.warning('Skipped optimizer update: non-finite gradients.')
                     continue
-
-                total_loss = mse_loss
-
-                total_loss.backward()
-                iteration_losses.append(total_loss.item())
-
-            if not iteration_losses:
-                log.warning(f"Skipped train_it {1+it}: every microbatch had a non-finite value.")
-                continue
-
-            mean_iteration_loss = float(np.mean(iteration_losses))
-            loss_steps.append(1 + it)
-            losses.append(mean_iteration_loss)
-            
-            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=0.5)
-            optimizer.step()
-            ema.update()
-            if sched is not None: sched.step()
-
-            log.info("train_it {}/{} | lr:{} | loss:{}".format(
-                1+it, opt.num_itr, "{:.2e}".format(optimizer.param_groups[0]['lr']), "{:+.4f}".format(total_loss.item()),
-            ))
-            
-            if it % 10 == 0:
-                self.writer.add_scalar(it, 'total_loss', total_loss.detach())
-                self.writer.add_scalar(it, 'mse_loss', mse_loss.detach())
-
-            if it % 100 == 0:
-                if opt.global_rank == 0:
+                optimizer.step()
+                self.ema.update()
+                if sched is not None:
+                    sched.step()
+                step += 1
+                mean_loss = weighted_loss / valid_samples
+                loss_steps.append(step)
+                losses.append(mean_loss)
+                self.log.info(f'train_it {step}/{opt.num_itr} | lr:{optimizer.param_groups[0]["lr"]:.2e} '
+                              f'| loss:{mean_loss:.6f} | valid_samples:{valid_samples} | grad_norm:{float(grad_norm):.4f}')
+                self.writer.add_scalar(step, 'train/loss', mean_loss)
+                self.writer.add_scalar(step, 'train/valid_samples', valid_samples)
+                if step % opt.val_every == 0:
+                    metrics = self.evaluation(opt, step, val_loader, corrupt_method)
+                    if metrics['rmse_m'] < self.best_rmse:
+                        self.best_rmse = metrics['rmse_m']
+                        save_checkpoint('best.pt')
+                    save_checkpoint('latest.pt')
+                elif step % 100 == 0:
+                    save_checkpoint('latest.pt')
+                if step % 100 == 0:
                     save_training_error_plot(loss_steps, losses, loss_plot_path)
-                    torch.save({
-                        "net": self.net.state_dict(),
-                        'embedding': self.rainfall_emb.state_dict(),
-                        "ema": ema.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "sched": sched.state_dict() if sched is not None else sched,
-                    }, opt.ckpt_path / "latest.pt")
-                    log.info(f"Saved latest({it=}) checkpoint to {opt.ckpt_path=}!")
-                if opt.distributed:
-                    torch.distributed.barrier()
-
-        if opt.global_rank == 0 and losses:
-            save_training_error_plot(loss_steps, losses, loss_plot_path)
-        self.writer.close()
+            # Include the final optimizer state even when it is off the save cadence.
+            if step > self.start_step and step % opt.val_every != 0:
+                metrics = self.evaluation(opt, step, val_loader, corrupt_method)
+                if metrics['rmse_m'] < self.best_rmse:
+                    self.best_rmse = metrics['rmse_m']
+                    save_checkpoint('best.pt')
+            if step > self.start_step:
+                save_checkpoint('latest.pt')
+                save_training_error_plot(loss_steps, losses, loss_plot_path)
+        finally:
+            self.writer.close()
 
     @torch.no_grad()
-    def ddpm_sampling(self, opt, x1, y, mask=None, cond=None, clip_denoise=False, nfe=None, log_count=10, verbose=True, eval=False, ode_method=None):
-        nfe = nfe or opt.interval-1
-        steps = util.space_indices(opt.interval, nfe+1)
-        log_count = min(len(steps)-1, log_count)
-        log_steps = [steps[i] for i in util.space_indices(len(steps)-1, log_count)]
-        self.log.info(f"[DDPM Sampling] steps={opt.interval}, {nfe=}, {log_steps=}!")
-
+    def ddpm_sampling(self, opt, x1, y, mask=None, cond=None, clip_denoise=False,
+                      nfe=None, log_count=10, verbose=True, eval=False, ode_method=None):
+        if ode_method not in (None, 'i2sb'):
+            raise ValueError('Residual I2SB checkpoints require the i2sb posterior sampler.')
+        if clip_denoise:
+            raise ValueError('Depth z-scores cannot use [-1,1] denoising clipping.')
+        nfe = opt.interval - 1 if nfe is None else nfe
+        if not 1 <= nfe < opt.interval:
+            raise ValueError('Require 1 <= nfe < interval.')
+        steps = util.space_indices(opt.interval, nfe + 1)
+        log_count = max(1, min(nfe, log_count))
+        log_steps = [steps[i] for i in util.space_indices(len(steps) - 1, log_count)]
+        net_training, rain_training = self.net.training, self.rainfall_emb.training
         x1 = x1.to(opt.device)
-        if cond is not None: cond = cond.to(opt.device)
-        # mask = None # (傳入的 mask 已經是 None，所以不需要特別設定)
-
-        with self.ema.average_parameters():
+        cond = cond.to(opt.device) if cond is not None else None
+        try:
             self.net.eval()
+            self.rainfall_emb.eval()
+            with self.ema.average_parameters():
+                rainfall_emb = self.rainfall_emb(y.to(opt.device))
 
-            def pred_x0_fn(x1, xt, rainfall_emb, step, ode=None):
-                if not ode:
-                    step = torch.full((xt.shape[0],), step, device=opt.device, dtype=torch.long)
-                    out = self.net(xt, step, rainfall_emb, cond=cond)
-                    return self.compute_pred_x0(step, xt, x1, out, clip_denoise=clip_denoise)
-                else:
-                    step = torch.full((xt.shape[0],), step, device=opt.device, dtype=torch.float32)
-                    out = self.net(xt, step, rainfall_emb, cond=cond)
-                    return out
+                def pred_x0_fn(x1, xt, rainfall_emb, index):
+                    indices = torch.full((xt.shape[0],), index, device=xt.device, dtype=torch.long)
+                    residual = self.net(xt, indices, rainfall_emb, cond=cond)
+                    return self.compute_pred_x0(indices, xt, x1, residual)
 
-            rainfall_emb = self.rainfall_emb(y)
-            xs, pred_x0 = self.diffusion.ddpm_sampling(
-                steps, pred_x0_fn, x1, rainfall_emb, mask=mask, ot_ode=opt.ot_ode, log_steps=log_steps, verbose=verbose, ode_method=ode_method
-            )
-
-        return xs, pred_x0
+                return self.diffusion.ddpm_sampling(
+                    steps, pred_x0_fn, x1, rainfall_emb, mask=mask, ot_ode=opt.ot_ode,
+                    log_steps=log_steps, verbose=verbose,
+                )
+        finally:
+            self.net.train(net_training)
+            self.rainfall_emb.train(rain_training)
 
     @torch.no_grad()
     def evaluation(self, opt, it, val_loader, corrupt_method):
-
-        log = self.log
-        log.info(f"========== Evaluation started: iter={it} ==========")
-
-        img_clean, img_corrupt, mask, y, cond, _, _ = self.sample_batch(opt, val_loader, corrupt_method)
-
-        x1 = img_corrupt.to(opt.device)
-        xs, pred_x0s = self.ddpm_sampling(
-            opt, x1, y, mask=mask, cond=cond, clip_denoise=opt.clip_denoise, verbose=opt.global_rank==0
-        )
-
-        log.info("Collecting tensors ...")
-        img_clean   = all_cat_cpu(opt, log, img_clean)
-        img_corrupt = all_cat_cpu(opt, log, img_corrupt)
-        y           = all_cat_cpu(opt, log, y)
-        xs          = all_cat_cpu(opt, log, xs)
-        pred_x0s    = all_cat_cpu(opt, log, pred_x0s)
-
-        batch, len_t, *xdim = xs.shape
-        assert img_clean.shape == img_corrupt.shape == (batch, *xdim)
-        assert xs.shape == pred_x0s.shape
-        # assert y.shape == (batch,)
-        log.info(f"Generated recon trajectories: size={xs.shape}")
-
-        def log_image(tag, img, nrow=10):
-            self.writer.add_image(it, tag, tu.make_grid((img+1)/2, nrow=nrow)) # [1,1] -> [0,1]
-
-        # def log_accuracy(tag, img):
-        #     pred = self.resnet(img.to(opt.device)) # input range [-1,1]
-        #     accu = self.accuracy(pred, img_clean.to(opt.device))
-        #     self.writer.add_scalar(it, tag, accu)
-
-        log.info("Logging images ...")
-        img_recon = xs[:, 0, ...]
-        log_image("image/clean",   img_clean)
-        log_image("image/corrupt", img_corrupt)
-        log_image("image/recon",   img_recon)
-        log_image("debug/pred_clean_traj", pred_x0s.reshape(-1, *xdim), nrow=len_t)
-        log_image("debug/recon_traj",      xs.reshape(-1, *xdim),      nrow=len_t)
-
-        # log.info("Logging accuracies ...")
-        # log_accuracy("accuracy/clean",   img_clean)
-        # log_accuracy("accuracy/corrupt", img_corrupt)
-        # log_accuracy("accuracy/recon",   img_recon)
-
-        log.info(f"========== Evaluation finished: iter={it} ==========")
-        torch.cuda.empty_cache()
+        prediction_metrics, baseline_metrics = DepthMetrics(), DepthMetrics()
+        dataset = val_loader.dataset
+        if not hasattr(dataset, 'depth_mean') or not hasattr(dataset, 'depth_std'):
+            raise ValueError('Validation dataset must declare its depth normalization.')
+        device = torch.device(opt.device)
+        devices = [torch.cuda.current_device() if device.index is None else device.index] if device.type == 'cuda' else []
+        # Same validation noise every time; validation must not advance training RNG.
+        with torch.random.fork_rng(devices=devices):
+            torch.manual_seed(opt.validation_seed)
+            if device.type == 'cuda':
+                torch.cuda.manual_seed(opt.validation_seed)
+            for batch in val_loader:
+                x0, x1, _, y, cond, maximum, _ = self.sample_batch(opt, iter([batch]), corrupt_method)
+                xs, _ = self.ddpm_sampling(
+                    opt, x1, y, cond=cond, nfe=opt.val_nfe, log_count=1, verbose=False,
+                )
+                prediction = xs[:, 0].to(x0.device)
+                truth_m = depth_metres(x0, dataset.depth_mean, dataset.depth_std, maximum)
+                prediction_m = depth_metres(prediction, dataset.depth_mean, dataset.depth_std, maximum)
+                baseline_m = depth_metres(x1, dataset.depth_mean, dataset.depth_std, maximum)
+                prediction_metrics.update(prediction_m, truth_m)
+                baseline_metrics.update(baseline_m, truth_m)
+        metrics = prediction_metrics.compute()
+        metrics.update({'ca4d_' + key: value for key, value in baseline_metrics.compute().items()})
+        for key, value in metrics.items():
+            self.writer.add_scalar(it, 'validation/' + key, value)
+        self.log.info(f'Validation step={it} samples={len(dataset)} nfe={opt.val_nfe}: {metrics}')
+        return metrics

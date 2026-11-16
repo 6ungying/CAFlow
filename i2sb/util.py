@@ -67,9 +67,7 @@ def custom_collate_fn(batch):
     if all(ca4d is None for ca4d in ca4ds):
         ca4d_batch = None
     elif any(ca4d is None for ca4d in ca4ds):
-        reference_shape = next((c.shape for c in ca4ds if c is not None), None)
-        ca4ds_filled = [ca4d if ca4d is not None else torch.zeros(reference_shape) for ca4d in ca4ds]
-        ca4d_batch = torch.stack(ca4ds_filled)
+        raise ValueError("Every sample must have paired CA4D depth; refusing zero fill.")
     else:
         ca4d_batch = torch.stack(ca4ds)
 
@@ -147,7 +145,7 @@ class TensorBoardWriter(BaseWriter):
 
 def build_log_writer(opt):
     if opt.log_writer == 'wandb': return WandBWriter(opt)
-    elif opt.log_writer == 'tensorboard': return TensorBoardWriter(opt)
+    elif opt.log_writer in ('tensorboard', 'tensorbard'): return TensorBoardWriter(opt)
     else: return BaseWriter(opt)
 
 def count_parameters(model):

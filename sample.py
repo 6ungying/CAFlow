@@ -151,7 +151,9 @@ def compute_batch(ckpt_opt, corrupt_type, corrupt_method, out):
             y = rainfall.long()
         if y.dim() == 1:
             y = y.unsqueeze(0)
-        y = y.clamp(min=0, max=99).to(opt.device)
+        if (y < 0).any() or (y >= 100).any():
+            raise ValueError('Rainfall token must be in [0,99], matching training.')
+        y = y.to(opt.device)
 
         image_name = image_path
         _ = (max_depth, dem_id)
@@ -197,6 +199,11 @@ def main(opt):
 
     # Dataset must know whether to load paired CA4D data.
     opt.ca4d = getattr(ckpt_opt, "ca4d", False)
+    opt.single_max_depth = ckpt_opt.single_max_depth
+    if not opt.use_yilan and not opt.use_hsinchu:
+        if opt.use_single_dem and not ckpt_opt.use_single_dem:
+            raise ValueError('Single DEM testing requires a single DEM training checkpoint.')
+        opt.use_single_dem = ckpt_opt.use_single_dem
     log.info(f"[Config Sync] CA4D x1 from checkpoint: ca4d={opt.ca4d}; conditioning=DEM")
 
     # 如果命令列有指定 test_dem_list，使用它；否則從 ckpt_opt 繼承
@@ -208,7 +215,7 @@ def main(opt):
         log.info(f"Using test DEMs from training config: {opt.test_dem_list}")
     else:
         opt.test_dem_list = None
-        log.info("No test_dem_list specified, using single-DEM mode")
+        log.info("No held-out test DEM list stored in this checkpoint")
 
     # 如果命令列有指定 test_rain_list，使用它；否則從 ckpt_opt 繼承
     if opt.test_rain_list:
@@ -238,8 +245,7 @@ def main(opt):
         log.info(f"Using floodDataset for multi-DEM testing (test_dem_list: {opt.test_dem_list})")
         val_dataset = floodDataset(opt, test=True)
     else:
-        log.info("Using singleDEMFloodDataset for single-DEM testing (default)")
-        val_dataset = singleDEMFloodDataset(opt, test=True)
+        raise ValueError('Multi DEM testing requires held-out --test-dem-list; do not silently use the single DEM dataset.')
     
     from i2sb.util import custom_collate_fn
     subset_dataset = build_subset_per_gpu(opt, val_dataset, log)
@@ -250,10 +256,6 @@ def main(opt):
 
     runner = Runner(ckpt_opt, log, save_opt=False)
 
-    if opt.use_fp16:
-        runner.ema.copy_to() 
-        runner.net.diffusion_model.convert_to_fp16()
-        runner.ema = ExponentialMovingAverage(runner.net.parameters(), decay=0.99) 
 
     recon_imgs_fn = get_recon_imgs_fn(opt, nfe)
     log.info(f"Recon images will be saved to {recon_imgs_fn}!")
@@ -323,14 +325,17 @@ if __name__ == '__main__':
     parser.add_argument("--ca4d",           action="store_true", default=False, help="use paired CA4D depth as x1 (synced from checkpoint)")
 
     # sample
-    parser.add_argument("--batch-size",     type=int,  default=30)
-    parser.add_argument("--sampling-method", type=str, default='euler-maruyama', help="sampling method")
-    parser.add_argument("--ckpt",           type=str,  default="flood-single-ca4d", help="checkpoint name under the results directory, or a checkpoint directory path")
+    parser.add_argument("--batch-size",     type=int,  default=8)
+    parser.add_argument("--sampling-method", type=str, default='i2sb', choices=['i2sb'], help="Discrete I2SB posterior sampler")
+    parser.add_argument("--ckpt",           type=str,  default="flood-single-i2sb", help="checkpoint name under the results directory, or a checkpoint directory path")
     parser.add_argument("--nfe",            type=int,  default=10,        help="sampling steps")
     parser.add_argument("--clip-denoise",   action="store_true",            help="clamp predicted image to [-1,1] at each")
     parser.add_argument("--use-fp16",       action="store_true",            help="use fp16 network weight for faster sampling")
 
+    parser.add_argument('--checkpoint', choices=['best.pt', 'latest.pt'], default='best.pt')
     arg = parser.parse_args()
+    if arg.clip_denoise or arg.use_fp16:
+        parser.error('Depth I2SB currently uses FP32 without [-1,1] clipping.')
 
     opt = edict(
         distributed=(arg.n_gpu_per_node > 1),

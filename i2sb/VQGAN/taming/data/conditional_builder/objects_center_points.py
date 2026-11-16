@@ -88,7 +88,7 @@ class ObjectsCenterPointsConditionalBuilder:
         plot = pil_image.new('RGB', figure_size, WHITE)
         draw = pil_img_draw.Draw(plot)
         circle_size = get_circle_size(figure_size)
-        font = ImageFont.truetype('/usr/share/fonts/truetype/lato/Lato-Regular.ttf',
+        font = ImageFont.truetype('arial.ttf',
                                   size=get_plot_font_size(font_size, figure_size))
         width, height = plot.size
         description, crop_coordinates = self.inverse_build(conditional)

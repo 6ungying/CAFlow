@@ -22,6 +22,7 @@ from .blur import Deblurring
 from .superresolution import build_sr_bicubic, build_sr_pool
 from .inpaint import get_center_mask, load_freeform_masks
 from project_paths import DATA_DIR
+from dataset.splits import rainfall_split_ids
 
 from ipdb import set_trace as debug
 
@@ -194,8 +195,7 @@ class floodDataset(Dataset):
             self.terrain_depths = dict(zip(terrain_df['terrain'].astype(int), terrain_df['depth_max']))
             print(f"[Dataset] [OK] Loaded terrain depths from CSV: {len(self.terrain_depths)} terrains")
         else:
-            self.terrain_depths = {}
-            print(f"[Dataset] [WARNING] maxmin_duv.csv not found, using default depth 4.0m")
+            raise FileNotFoundError(f"Depth calibration is required for metre-scale validation: {maxmin_csv_path}")
         
         self.test = test
 
@@ -233,6 +233,9 @@ class floodDataset(Dataset):
             if test_rain_list is not None:
                 print(f"[Training mode] Excluding test rainfall scenarios: {test_rain_list}")
 
+        missing_depths = set(dem_folder) - set(self.terrain_depths)
+        if missing_depths:
+            raise ValueError(f"Missing maximum-depth calibration for DEMs: {sorted(missing_depths)}")
         rainfall = pd.read_csv(rainfall_path)
         rainfall = rainfall.iloc[:, :]
 
@@ -240,7 +243,12 @@ class floodDataset(Dataset):
         rainfall_cum_value = []
         cell_positions = []
 
-        val = False
+        scenario_ids = [int(c.split('_')[1]) for c in rainfall.columns if c != 'time']
+        if not test:
+            candidates = [i for i in scenario_ids if i not in (test_rain_list or [])]
+            training_ids, validation_ids = rainfall_split_ids(candidates, opt)
+            selected_ids = validation_ids if val else training_ids
+        self.depth_mean, self.depth_std = 0.986, 0.0405
         # Iterate through each column
         for dem_num in dem_folder:
             for col in rainfall.columns:
@@ -258,7 +266,7 @@ class floodDataset(Dataset):
                     if test_rain_list is not None and col_num in test_rain_list:
                         continue
                 
-                if (val and col_num not in [2]) or (not val and col_num in []):
+                if not test and col_num not in selected_ids:
                     continue
                 cell_values = []
                 # Iterate through each row in the current column
@@ -276,7 +284,7 @@ class floodDataset(Dataset):
                     if self.use_ca4d and row == 0:
                         continue
                     
-                    if not test and sum_rainfall <= 5:
+                    if not test and not val and sum_rainfall <= 5:
                         if np.random.rand() < 0.8:
                             continue
                     
@@ -557,12 +565,16 @@ class singleDEMFloodDataset(Dataset):
         rainfall_cum_value = []
         cell_positions = []
         
-        val = False
+        scenario_ids = [int(c.split('_')[1]) for c in rainfall.columns if c != 'time']
+        if not test:
+            training_ids, validation_ids = rainfall_split_ids(scenario_ids, opt)
+            selected_ids = validation_ids if val else training_ids
+        self.depth_mean, self.depth_std = 0.987, 0.0343
         for col in rainfall.columns:
             if col == 'time':
                 continue
             col_num = int(col.split("_")[1])
-            if (val and col_num not in [2]) or (not val and col_num in []):
+            if not test and col_num not in selected_ids:
                 continue
             cell_values = []
             for row in range(len(rainfall)):
@@ -681,7 +693,7 @@ class singleDEMFloodDataset(Dataset):
             zero_rainfall = np.zeros(24, dtype=np.int64)
             ca4d_image = None
             
-            max_depth = 4.0
+            max_depth = getattr(self.opt, 'single_max_depth', 4.0)
             dem_id = 1
             
             return (
@@ -733,7 +745,7 @@ class singleDEMFloodDataset(Dataset):
         # 標準化
         flood_image = (flood_image - 0.987) / 0.0343
 
-        max_depth = 4.0
+        max_depth = getattr(self.opt, 'single_max_depth', 4.0)
         dem_id = 1
 
         return (

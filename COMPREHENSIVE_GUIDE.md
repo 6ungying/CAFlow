@@ -20,29 +20,32 @@
 - --use-yilan：宜蘭區域評估
 - --use-hsinchu：新竹區域評估
 
-資料預設放在專案的 data/。如需使用其他位置，可設定
-CAFLOW_DATA_DIR。
+資料預設位於 `C:\Users\Hank\Desktop\data`。如需更改，可在 PowerShell 設定：
+
+~~~powershell
+$env:CAFLOW_DATA_DIR = "C:\Users\Hank\Desktop\data"
+~~~
 
 ## 訓練
 
 ### 單一 DEM
 
-~~~bash
-python train.py \
-  --name flood-single-ca4d \
-  --use-single-dem \
-  --ca4d \
+~~~powershell
+python train.py `
+  --name flood-single-i2sb `
+  --use-single-dem `
+  --ca4d `
   --batch-size 32
 ~~~
 
 ### 多 DEM
 
-~~~bash
-python train.py \
-  --name flood-multi-ca4d-new \
-  --test-dem-list 17,42,54 \
-  --test-rain-list 9,20,33 \
-  --ca4d \
+~~~powershell
+python train.py `
+  --name flood-multi-i2sb-new `
+  --test-dem-list 17,42,54 `
+  --test-rain-list 9,20,33 `
+  --ca4d `
   --batch-size 32
 ~~~
 
@@ -53,30 +56,30 @@ spatial conditioning。
 
 ### 單一 DEM
 
-~~~bash
-python sample.py \
-  --ckpt flood-single-ca4d \
-  --use-single-dem \
-  --nfe 10 \
+~~~powershell
+python sample.py `
+  --ckpt flood-single-i2sb `
+  --use-single-dem `
+  --nfe 10 `
   --batch-size 8
 ~~~
 
 ### 多 DEM
 
-~~~bash
-python sample.py \
-  --ckpt flood-multi-ca4d-new \
-  --test-dem-list 17,42,54 \
-  --test-rain-list 9,20,33 \
-  --nfe 10 \
+~~~powershell
+python sample.py `
+  --ckpt flood-multi-i2sb-new `
+  --test-dem-list 17,42,54 `
+  --test-rain-list 9,20,33 `
+  --nfe 10 `
   --batch-size 8
 ~~~
 
 ### 區域評估
 
-~~~bash
-python sample.py --ckpt flood-multi-ca4d-new --use-yilan --nfe 10 --batch-size 8
-python sample.py --ckpt flood-multi-ca4d-new --use-hsinchu --nfe 10 --batch-size 8
+~~~powershell
+python sample.py --ckpt flood-multi-i2sb-new --use-yilan --nfe 10 --batch-size 8
+python sample.py --ckpt flood-multi-i2sb-new --use-hsinchu --nfe 10 --batch-size 8
 ~~~
 
 ## 輸出位置

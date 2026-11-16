@@ -154,6 +154,8 @@ class Diffusion():
         return xt_prev
 
     def ddpm_sampling(self, steps, pred_x0_fn, x1, rainfall_emb, mask=None, ot_ode=False, log_steps=None, verbose=True, ode_method=None):
+        if ode_method not in (None, 'i2sb'):
+            raise ValueError('Only the discrete I2SB posterior sampler is supported.')
         xt = x1.detach().to(self.device)
 
         xs = []
@@ -162,7 +164,7 @@ class Diffusion():
         log_steps = log_steps or steps
         assert steps[0] == log_steps[0] == 0
 
-        if not ode_method:
+        if ode_method in (None, 'i2sb'):
             steps = steps[::-1]
 
             pair_steps = zip(steps[1:], steps[:-1])
@@ -179,96 +181,3 @@ class Diffusion():
 
             stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
             return stack_bwd_traj(xs), stack_bwd_traj(pred_x0s)
-        elif ode_method == 'ddim':
-            step_size = 1 / len(steps)
-            t = 1
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                x0 = x1 - drift
-                t = t - step_size
-                xt = (1-t) * x0 + t * x1
-
-                xs.append(x0.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)
-        elif ode_method == 'ddpm':
-            step_size = 1 / len(steps)
-            t = 1
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                x0 = x1 - drift
-                t = t - step_size
-                diffusion_coefficient = (t**2 * (1-t)**2) / (t**2 + (1-t)**2)
-                xt = (1-t) * x0 + t * x1 + torch.randn_like(xt) * np.sqrt(diffusion_coefficient) 
-
-                xs.append(x0.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)
-        
-        elif ode_method == 'euler':
-            step_size = 1 / len(steps)
-            t = 1
-            # t = t.view(-1, 1, 1, 1)
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                xt = xt - step_size * drift
-                t = t - step_size
-
-                xs.append(xt.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)
-        
-        elif ode_method == 'heun':
-            step_size = 1 / len(steps)
-            t = 1
-            # t = t.view(-1, 1, 1, 1)
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                drift_p = pred_x0_fn(x1, xt - step_size * drift, rainfall_emb, t - step_size, ode_method)
-
-                xt = xt - step_size * (drift + drift_p) / 2
-                t = t - step_size
-
-                xs.append(xt.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)
-        elif ode_method == 'rk4':
-            step_size = 1 / len(steps)
-            t = 1
-            # t = t.view(-1, 1, 1, 1)
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                k1 = step_size * drift
-
-                drift_p = pred_x0_fn(x1, xt - k1 / 2, rainfall_emb, t - step_size / 2, ode_method)
-                k2 = step_size * drift_p
-
-                drift_p = pred_x0_fn(x1, xt - k2 / 2, rainfall_emb, t - step_size / 2, ode_method)
-                k3 = step_size * drift_p
-
-                drift_p = pred_x0_fn(x1, xt - k3, rainfall_emb, t - step_size, ode_method)
-                k4 = step_size * drift_p
-
-                xt = xt - (k1 + 2 * k2 + 2 * k3 + k4) / 6
-                t = t - step_size
-
-                xs.append(xt.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)
-        
-        elif ode_method == 'euler-maruyama':
-            step_size = 1 / len(steps)
-            t = 1
-            # t = t.view(-1, 1, 1, 1)
-            for i in range(len(steps)):
-                drift = pred_x0_fn(x1, xt, rainfall_emb, t, ode_method)
-                # diffusion_coefficient = (t**2 * (1-t)**2) / (t**2 + (1-t)**2) 
-                # diffusion_coefficient = (t * (1-t)) ** (1/2)
-                diffusion_coefficient = 0.1
-                xt = xt - step_size * drift + torch.randn_like(xt) * np.sqrt(step_size) * diffusion_coefficient
-
-                t = t - step_size
-
-                xs.append(xt.detach().cpu())
-            stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
-            return stack_bwd_traj(xs), stack_bwd_traj(xs)

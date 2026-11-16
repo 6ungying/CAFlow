@@ -80,8 +80,12 @@ class Image256Net(torch.nn.Module):
         t = steps.detach()
         if t.dim() > 1:
             t = t.view(t.shape[0], -1)[:, 0]
+        if t.is_floating_point() and not torch.equal(t, t.round()):
+            raise ValueError("I2SB expects discrete timestep indices, not continuous time.")
         t = t.to(dtype=torch.long, device=x.device)
         assert t.dim() == 1 and t.shape[0] == x.shape[0]
+        if (t < 0).any() or (t >= len(self.noise_levels)).any():
+            raise ValueError("Timestep index is outside the diffusion schedule.")
 
         if self.cond:
             if cond is None:
